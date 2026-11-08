@@ -344,6 +344,14 @@ mod app {
                     u.restore_panel();
                 }),
                 Command::AddTerm { src, dst } => crate::extras::add_term(&shared, &tr, &src, &dst),
+                Command::AddName { src, dst } => {
+                    crate::extras::add_name(&shared, &tr, &src, &dst);
+                    shared.ui(|u| u.name_offers.retain(|(s, _)| *s != src));
+                }
+                Command::IgnoreName(src) => {
+                    tr.ignore_name(&src);
+                    shared.ui(|u| u.name_offers.retain(|(s, _)| *s != src));
+                }
                 Command::Diagnose => {
                     tokio::spawn(crate::extras::diagnose(shared.clone(), tr.clone(), ocr.clone()));
                 }

@@ -25,6 +25,10 @@ pub struct Translator {
     /// Recent dialogue translations found by similarity (OCR reads a line a bit
     /// differently each time; without this it was translated again and again).
     fuzzy: Mutex<FuzzyMemory>,
+    /// Character names noticed in translations (offered for the title's dictionary).
+    names: Mutex<manga_core::names::NameWatch>,
+    /// Originals the reader said are not names.
+    not_names: Mutex<std::collections::HashSet<String>>,
     /// The title whose dictionary is loaded (see `ensure_title`).
     title: Mutex<String>,
     /// When the last dialogue line was translated: after a long silence the
@@ -152,6 +156,12 @@ impl Translator {
                  # skip\tUser ID\n",
             );
         }
+        let not_names = std::fs::read_to_string(paths.data.join("not_names.txt"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
         let fixes = load_fixes(&paths);
         let glossary = load_glossary(&paths, profile, "");
         tracing::info!("кэш: {} · исправления: {} · глоссарий: {}", cache.len(), corrections.len(), glossary.len());
@@ -165,6 +175,8 @@ impl Translator {
             history: Mutex::new(History::new(context_lines)),
             fuzzy: Mutex::new(FuzzyMemory::new(400, 0.9)),
             title: Mutex::new(String::new()),
+            names: Mutex::new(manga_core::names::NameWatch::new()),
+            not_names: Mutex::new(not_names),
             last_dialogue: Mutex::new(None),
             gate: tokio::sync::Mutex::new(()),
         }
@@ -216,6 +228,21 @@ impl Translator {
             );
         }
         Some(path)
+    }
+
+    /// Look for character names in a translated bubble: the pairs (original,
+    /// Russian) to offer now — not in any dictionary and not turned down.
+    pub fn observe_names(&self, lang: manga_core::lang::Lang, src: &str, dst: &str) -> Vec<(String, String)> {
+        let g = self.glossary.lock().unwrap();
+        let not = self.not_names.lock().unwrap();
+        self.names.lock().unwrap().observe(src, dst, lang, |o| g.exact(o).is_some() || not.contains(o))
+    }
+
+    /// The reader says this is not a name: never offer it again.
+    pub fn ignore_name(&self, src: &str) {
+        if self.not_names.lock().unwrap().insert(src.to_string()) {
+            append(&self.paths.data.join("not_names.txt"), &format!("{src}\n"));
+        }
     }
 
     pub fn dict_counts(&self) -> (usize, usize) {

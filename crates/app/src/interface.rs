@@ -395,8 +395,11 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
 /// translations stay in the cache, so the page comes back at once.
 async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &crate::config::ModelPreset, game: &str, gen: u64, unique: Vec<String>) {
     let alive = || shared.interface_gen.load(Ordering::SeqCst) == gen;
+    let lang = shared.cfg().source_lang();
     let set_result = |src: &str, dst: String| {
+        let names = tr.observe_names(lang, src, &dst);
         shared.ui(|u| {
+            u.offer_names(names);
             if let Some(v) = u.interface.as_mut().filter(|v| v.generation == gen) {
                 for it in v.items.iter_mut().filter(|it| it.src == src) {
                     it.dst = Some(dst.clone());

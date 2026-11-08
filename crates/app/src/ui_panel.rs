@@ -897,6 +897,35 @@ fn page_dictionaries(ui: &mut Ui, shared: &Arc<Shared>, edits: &mut HashMap<Stri
             }
         }
     });
+    // Names noticed in translations: one click puts them into the title's dictionary.
+    let offers = shared.ui.lock().unwrap().name_offers.clone();
+    if !offers.is_empty() {
+        ui.add_space(8.0);
+        card(ui, "Похоже на имена героев", |ui| {
+            hint(ui, if title.is_empty() {
+                "Добавьте — и имя будет переводиться одинаково. Без названия тайтла имена попадут в общий глоссарий."
+            } else {
+                "Добавьте — и имя будет переводиться одинаково во всех главах этого тайтла. Русское написание можно поправить."
+            });
+            ui.add_space(4.0);
+            for (src, dst) in offers {
+                let key = format!("name:{src}");
+                let value = edits.entry(key.clone()).or_insert_with(|| dst.clone());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&src).size(16.0).family(FontFamily::Name("bold".into())));
+                    ui.label(RichText::new("→").color(WEAK));
+                    ui.add(egui::TextEdit::singleline(value).desired_width(160.0));
+                    let add = egui::Button::new(RichText::new("Добавить").color(on_accent())).fill(accent()).rounding(Rounding::same(10.0));
+                    if ui.add(add).clicked() {
+                        shared.send(Command::AddName { src: src.clone(), dst: value.trim().to_string() });
+                    }
+                    if ui.button("Не имя").on_hover_text("Больше не предлагать").clicked() {
+                        shared.send(Command::IgnoreName(src.clone()));
+                    }
+                });
+            }
+        });
+    }
     ui.horizontal(|ui| {
         if ui.button("⟳  Перечитать словари").clicked() {
             shared.send(Command::ReloadGlossary);

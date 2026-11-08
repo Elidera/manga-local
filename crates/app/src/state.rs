@@ -68,6 +68,10 @@ pub enum Command {
     TranslateFiles(std::path::PathBuf),
     /// Stop the chapter translation after the current page.
     StopFiles,
+    /// Add a character name to the title's dictionary (or the user's glossary).
+    AddName { src: String, dst: String },
+    /// «Не имя»: never offer this original again.
+    IgnoreName(String),
     /// Download the manga-ocr model (vertical Japanese).
     DownloadJaOcr,
     /// Open the dictionary of the current title (created on first use).
@@ -200,6 +204,8 @@ pub struct UiState {
     pub files_progress: Option<String>,
     /// Vertical Japanese (manga-ocr): download progress or a problem.
     pub ja_ocr_status: Option<String>,
+    /// Character names noticed in translations, offered for the title's dictionary.
+    pub name_offers: Vec<(String, String)>,
     pub ocr_debug: Option<OcrDebug>,
     /// Windows OCR availability (None = not checked yet).
     pub ocr_status: Option<Result<(), String>>,
@@ -212,6 +218,17 @@ pub struct UiState {
 }
 
 impl UiState {
+    /// Offer character names noticed in translations (once each).
+    pub fn offer_names(&mut self, pairs: Vec<(String, String)>) {
+        for (src, dst) in pairs {
+            if self.name_offers.iter().any(|(s, _)| *s == src) {
+                continue;
+            }
+            self.notice(format!("Похоже на имя героя: {src} → {dst}. Добавить в словарь тайтла — раздел «Словари»"));
+            self.name_offers.push((src, dst));
+        }
+    }
+
     /// Hide the panel for a screenshot; returns whether it was open.
     pub fn hide_panel_for_shot(&mut self) -> bool {
         let was = self.panel_open;

@@ -134,6 +134,12 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
             result.insert(src.to_string(), dst);
         })
         .await;
+        for (src, dst) in &result {
+            let names = tr.observe_names(lang, src, dst);
+            if !names.is_empty() {
+                shared.ui(|u| u.offer_names(names));
+            }
+        }
         let pairs: Vec<(String, String)> = items.iter().filter_map(|it| result.get(&it.src).filter(|d| **d != it.src).map(|d| (it.src.clone(), d.clone()))).collect();
         prev = pairs.into_iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
         progress("вписываю перевод");

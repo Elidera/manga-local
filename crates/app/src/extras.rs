@@ -248,6 +248,30 @@ pub fn add_term(shared: &Shared, tr: &Translator, src: &str, dst: &str) {
     }
 }
 
+/// A character name goes to the title's dictionary (with a title set), else
+/// to the user's glossary.
+pub fn add_name(shared: &Shared, tr: &Translator, src: &str, dst: &str) {
+    let (src, dst) = (src.trim(), dst.trim());
+    if src.is_empty() || dst.is_empty() {
+        return;
+    }
+    let title = shared.cfg().general.game_title;
+    let Some(path) = tr.title_glossary_file(&title) else {
+        add_term(shared, tr, src, dst);
+        return;
+    };
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let line = manga_core::tsv::line(&[src, dst, "имя"]);
+    let (merged, added) = manga_core::bundle::merge(&existing, &line);
+    if added > 0 && std::fs::write(&path, merged).is_ok() {
+        let (n, f) = tr.reload_dictionaries(&shared.cfg().general.profile);
+        shared.ui(|u| {
+            u.dict_counts = (n, f);
+            u.notice(format!("В словарь тайтла добавлено: {src} → {dst}"));
+        });
+    }
+}
+
 // ------------------------------------------------------------ dictionaries
 
 pub fn export_dicts(shared: &Shared, tr: &Translator, path: &std::path::Path) {
