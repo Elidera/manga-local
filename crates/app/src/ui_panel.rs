@@ -1,4 +1,5 @@
-//! Control panel: dark "ink & gold" theme, sidebar navigation, cards.
+//! Control panel: «Ночной вебтун» — dark navy, rounded tiles, one accent colour
+//! the reader picks (бирюза by default), sidebar navigation.
 //!
 //! Pages: Главная (status, checklist, big actions, model) · Настройки ·
 //! Словари · Проверка · Справка.
@@ -10,15 +11,58 @@ use eframe::egui::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub const BG: Color32 = Color32::from_rgb(20, 22, 27);
-pub const CARD: Color32 = Color32::from_rgb(29, 32, 39);
-pub const CARD_HI: Color32 = Color32::from_rgb(38, 42, 51);
-pub const GOLD: Color32 = Color32::from_rgb(212, 165, 90);
-pub const RED: Color32 = Color32::from_rgb(196, 92, 70);
-pub const GREEN: Color32 = Color32::from_rgb(112, 184, 124);
-pub const YELLOW: Color32 = Color32::from_rgb(226, 182, 84);
-pub const TEXT: Color32 = Color32::from_rgb(234, 228, 216);
-pub const WEAK: Color32 = Color32::from_rgb(150, 146, 138);
+pub const BG: Color32 = Color32::from_rgb(17, 18, 27);
+pub const NAV: Color32 = Color32::from_rgb(23, 25, 38);
+pub const CARD: Color32 = Color32::from_rgb(28, 30, 45);
+pub const CARD_HI: Color32 = Color32::from_rgb(38, 41, 64);
+pub const RED: Color32 = Color32::from_rgb(255, 112, 112);
+pub const GREEN: Color32 = Color32::from_rgb(95, 215, 150);
+pub const YELLOW: Color32 = Color32::from_rgb(255, 201, 121);
+pub const TEXT: Color32 = Color32::from_rgb(236, 234, 244);
+pub const WEAK: Color32 = Color32::from_rgb(184, 180, 204);
+
+/// Ready-made accent colours of the panel (the reader may also pick any).
+pub const ACCENTS: &[(&str, [u8; 3])] = &[
+    ("Бирюза", [60, 201, 180]),
+    ("Янтарь", [255, 181, 71]),
+    ("Лаванда", [157, 140, 255]),
+    ("Голубой", [77, 163, 255]),
+    ("Коралл", [255, 122, 144]),
+];
+
+static ACCENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3C_C9_B4);
+
+/// The accent colour the reader chose (buttons, selection, icons).
+pub fn accent() -> Color32 {
+    let v = ACCENT.load(std::sync::atomic::Ordering::Relaxed);
+    Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
+/// Text on an accent fill: dark on light accents, white on dark ones.
+pub fn on_accent() -> Color32 {
+    let a = accent();
+    let l = 0.299 * a.r() as f32 + 0.587 * a.g() as f32 + 0.114 * a.b() as f32;
+    if l > 140.0 {
+        Color32::from_rgb(14, 20, 26)
+    } else {
+        Color32::WHITE
+    }
+}
+
+/// A dark tint of the accent (selected menu item, active tiles).
+pub fn accent_tint() -> Color32 {
+    let (a, n) = (accent(), NAV);
+    let mix = |x: u8, y: u8| (x as f32 * 0.22 + y as f32 * 0.78) as u8;
+    Color32::from_rgb(mix(a.r(), n.r()), mix(a.g(), n.g()), mix(a.b(), n.b()))
+}
+
+/// Apply the reader's colour if it changed (called every frame, cheap).
+pub fn sync_accent(ctx: &egui::Context, rgb: [u8; 3]) {
+    let v = (rgb[0] as u32) << 16 | (rgb[1] as u32) << 8 | rgb[2] as u32;
+    if ACCENT.swap(v, std::sync::atomic::Ordering::Relaxed) != v {
+        apply_theme(ctx);
+    }
+}
 
 /// Donation page. Empty = the «Поддержать» button is hidden.
 pub const DONATE_URL: &str = "";
@@ -57,27 +101,27 @@ pub fn apply_theme(ctx: &egui::Context) {
     let mut v = egui::Visuals::dark();
     v.panel_fill = BG;
     v.window_fill = BG;
-    v.extreme_bg_color = Color32::from_rgb(14, 15, 19);
+    v.extreme_bg_color = Color32::from_rgb(13, 14, 22);
     v.faint_bg_color = CARD;
     v.override_text_color = Some(TEXT);
-    v.hyperlink_color = GOLD;
-    v.selection.bg_fill = Color32::from_rgb(110, 84, 44);
-    v.selection.stroke = Stroke::new(1.0, GOLD);
-    v.window_rounding = Rounding::same(10.0);
-    let r = Rounding::same(7.0);
+    v.hyperlink_color = accent();
+    v.selection.bg_fill = accent_tint();
+    v.selection.stroke = Stroke::new(1.0, accent());
+    v.window_rounding = Rounding::same(14.0);
+    let r = Rounding::same(10.0);
     for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
         w.rounding = r;
     }
     v.widgets.noninteractive.bg_fill = CARD;
     v.widgets.noninteractive.weak_bg_fill = CARD;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(44, 48, 58));
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(46, 49, 72));
     v.widgets.inactive.bg_fill = CARD_HI;
     v.widgets.inactive.weak_bg_fill = CARD_HI;
-    v.widgets.hovered.bg_fill = Color32::from_rgb(52, 57, 69);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(52, 57, 69);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, GOLD);
-    v.widgets.active.bg_fill = Color32::from_rgb(120, 92, 48);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(120, 92, 48);
+    v.widgets.hovered.bg_fill = Color32::from_rgb(50, 54, 82);
+    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(50, 54, 82);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, accent());
+    v.widgets.active.bg_fill = accent_tint();
+    v.widgets.active.weak_bg_fill = accent_tint();
     style.visuals = v;
     style.spacing.item_spacing = vec2(8.0, 8.0);
     style.spacing.button_padding = vec2(12.0, 6.0);
@@ -99,13 +143,12 @@ pub fn apply_theme(ctx: &egui::Context) {
 fn card<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::none()
         .fill(CARD)
-        .rounding(Rounding::same(10.0))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(42, 46, 56)))
-        .inner_margin(Margin::same(14.0))
+        .rounding(Rounding::same(18.0))
+        .inner_margin(Margin::same(16.0))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             if !title.is_empty() {
-                ui.label(RichText::new(title).size(16.0).family(FontFamily::Name("bold".into())).color(GOLD));
+                ui.label(RichText::new(title).size(16.5).family(FontFamily::Name("bold".into())).color(TEXT));
                 ui.add_space(2.0);
             }
             add(ui)
@@ -122,12 +165,11 @@ fn key_chip(ui: &mut Ui, key: &str) {
         return;
     }
     egui::Frame::none()
-        .fill(Color32::from_rgb(14, 15, 19))
-        .rounding(Rounding::same(4.0))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(70, 74, 84)))
-        .inner_margin(Margin::symmetric(6.0, 1.0))
+        .fill(Color32::from_rgb(42, 45, 66))
+        .rounding(Rounding::same(8.0))
+        .inner_margin(Margin::symmetric(8.0, 2.0))
         .show(ui, |ui| {
-            ui.label(RichText::new(key).monospace().size(12.0).color(WEAK));
+            ui.label(RichText::new(key).size(13.0).family(FontFamily::Name("bold".into())).color(TEXT));
         });
 }
 
@@ -142,10 +184,10 @@ fn toggle(ui: &mut Ui, on: &mut bool) -> egui::Response {
     if ui.is_rect_visible(rect) {
         let t = ui.ctx().animate_bool(resp.id, *on);
         let r = rect.height() / 2.0;
-        let bg = if *on { Color32::from_rgb(150, 112, 56) } else { Color32::from_rgb(60, 64, 74) };
+        let bg = if *on { accent().gamma_multiply(0.55) } else { Color32::from_rgb(58, 61, 86) };
         ui.painter().rect_filled(rect, Rounding::same(r), bg);
         let cx = egui::lerp((rect.left() + r)..=(rect.right() - r), t);
-        ui.painter().circle_filled(egui::pos2(cx, rect.center().y), r * 0.78, if *on { GOLD } else { Color32::from_gray(190) });
+        ui.painter().circle_filled(egui::pos2(cx, rect.center().y), r * 0.78, if *on { accent() } else { Color32::from_gray(190) });
     }
     resp
 }
@@ -226,8 +268,8 @@ fn segmented(ui: &mut Ui, value: &mut String, options: &[(&str, &str)]) -> bool 
         ui.spacing_mut().item_spacing.x = 2.0;
         for (v, label) in options {
             let selected = value == v;
-            let text = RichText::new(*label).color(if selected { Color32::BLACK } else { TEXT });
-            let b = egui::Button::new(text).fill(if selected { GOLD } else { CARD_HI }).rounding(Rounding::same(6.0));
+            let text = RichText::new(*label).color(if selected { on_accent() } else { TEXT });
+            let b = egui::Button::new(text).fill(if selected { accent() } else { CARD_HI }).rounding(Rounding::same(10.0));
             if ui.add(b).clicked() && !selected {
                 *value = v.to_string();
                 changed = true;
@@ -238,23 +280,23 @@ fn segmented(ui: &mut Ui, value: &mut String, options: &[(&str, &str)]) -> bool 
 }
 
 fn big_action(ui: &mut Ui, title: &str, subtitle: &str, key: &str, active: bool, width: f32) -> bool {
-    let fill = if active { Color32::from_rgb(64, 52, 30) } else { CARD_HI };
-    let stroke = if active { Stroke::new(1.5, GOLD) } else { Stroke::new(1.0, Color32::from_rgb(52, 56, 66)) };
+    let fill = if active { accent_tint() } else { CARD };
+    let stroke = if active { Stroke::new(1.5, accent()) } else { Stroke::NONE };
     let resp = egui::Frame::none()
         .fill(fill)
         .stroke(stroke)
-        .rounding(Rounding::same(10.0))
-        .inner_margin(Margin::same(12.0))
+        .rounding(Rounding::same(18.0))
+        .inner_margin(Margin::same(16.0))
         .show(ui, |ui| {
             // The caller lays buttons out in a row: without an explicit vertical layout the
             // subtitle would be placed to the right of the title and widen the button.
-            let w = (width - 26.0).max(120.0);
+            let w = (width - 32.0).max(120.0);
             ui.set_width(w);
             ui.set_max_width(w);
             ui.vertical(|ui| {
                 ui.set_min_height(58.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(title).size(16.5).family(FontFamily::Name("bold".into())).color(if active { GOLD } else { TEXT }));
+                    ui.label(RichText::new(title).size(17.5).family(FontFamily::Name("bold".into())).color(if active { accent() } else { TEXT }));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| key_chip(ui, key));
                 });
                 hint(ui, subtitle);
@@ -268,12 +310,43 @@ fn big_action(ui: &mut Ui, title: &str, subtitle: &str, key: &str, active: bool,
     resp.clicked()
 }
 
+/// The main action: a wide tile in the accent colour.
+fn hero_action(ui: &mut Ui, title: &str, subtitle: &str, key: &str, active: bool) -> bool {
+    let (fill, fg) = if active { (accent_tint(), accent()) } else { (accent(), on_accent()) };
+    let resp = egui::Frame::none()
+        .fill(fill)
+        .stroke(if active { Stroke::new(1.5, accent()) } else { Stroke::NONE })
+        .rounding(Rounding::same(22.0))
+        .inner_margin(Margin::symmetric(22.0, 18.0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(title).size(23.0).family(FontFamily::Name("bold".into())).color(fg));
+                    ui.label(RichText::new(subtitle).size(14.5).color(fg));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if !key.is_empty() {
+                        egui::Frame::none().fill(if active { CARD_HI } else { Color32::from_rgb(14, 20, 26) }).rounding(Rounding::same(10.0)).inner_margin(Margin::symmetric(12.0, 5.0)).show(ui, |ui| {
+                            ui.label(RichText::new(key).size(16.0).family(FontFamily::Name("bold".into())).color(Color32::WHITE));
+                        });
+                    }
+                });
+            });
+        })
+        .response
+        .interact(Sense::click());
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
+}
+
 fn status_pill(ui: &mut Ui, text: &str, color: Color32) {
     egui::Frame::none()
-        .fill(color.gamma_multiply(0.18))
-        .stroke(Stroke::new(1.0, color))
-        .rounding(Rounding::same(12.0))
-        .inner_margin(Margin::symmetric(10.0, 3.0))
+        .fill(color.gamma_multiply(0.16))
+        .rounding(Rounding::same(999.0))
+        .inner_margin(Margin::symmetric(12.0, 5.0))
         .show(ui, |ui| {
             ui.label(RichText::new(text).color(color).strong());
         });
@@ -301,16 +374,22 @@ fn check_item(ui: &mut Ui, ok: Option<bool>, title: &str, detail: &str) {
 /// Returns true if the config was edited (debounced save).
 pub fn panel_ui(ctx: &egui::Context, shared: &Arc<Shared>, st: &mut PanelState, ocr_view: Option<&OcrView>) -> bool {
     let mut dirty = false;
-
-    egui::TopBottomPanel::top("wx_header").frame(egui::Frame::none().fill(Color32::from_rgb(16, 17, 21)).inner_margin(Margin::symmetric(16.0, 10.0))).show(ctx, |ui| {
-        header(ui, shared);
-    });
+    sync_accent(ctx, shared.cfg().general.accent);
 
     egui::SidePanel::left("wx_nav")
-        .exact_width(150.0)
+        .exact_width(190.0)
         .resizable(false)
-        .frame(egui::Frame::none().fill(Color32::from_rgb(16, 17, 21)).inner_margin(Margin::symmetric(10.0, 14.0)))
+        .frame(egui::Frame::none().fill(NAV).inner_margin(Margin::symmetric(14.0, 18.0)))
         .show(ctx, |ui| {
+            // Logo.
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+                ui.painter().rect_filled(rect, Rounding::same(12.0), accent());
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "ML", FontId::new(16.0, FontFamily::Name("bold".into())), on_accent());
+                ui.add_space(4.0);
+                ui.label(RichText::new("Manga Local").size(19.0).family(FontFamily::Name("bold".into())).color(TEXT));
+            });
+            ui.add_space(14.0);
             for (tab, icon, label) in [
                 (Tab::Home, "⌂", "Главная"),
                 (Tab::Settings, "⚙", "Настройки"),
@@ -319,12 +398,15 @@ pub fn panel_ui(ctx: &egui::Context, shared: &Arc<Shared>, st: &mut PanelState, 
                 (Tab::Help, "❓", "Справка"),
             ] {
                 let selected = st.tab == tab;
-                let text = RichText::new(format!("{icon}  {label}")).size(15.5).color(if selected { GOLD } else { TEXT });
-                let b = egui::Button::new(text)
-                    .fill(if selected { Color32::from_rgb(40, 36, 28) } else { Color32::TRANSPARENT })
-                    .stroke(if selected { Stroke::new(1.0, Color32::from_rgb(110, 86, 48)) } else { Stroke::NONE })
-                    .rounding(Rounding::same(8.0))
-                    .min_size(vec2(130.0, 34.0));
+                let mut job = egui::text::LayoutJob::default();
+                let fmt = |c: Color32| egui::TextFormat { font_id: FontId::new(16.0, FontFamily::Name("bold".into())), color: c, ..Default::default() };
+                job.append(icon, 0.0, fmt(if selected { accent() } else { WEAK }));
+                job.append(label, 10.0, fmt(if selected { Color32::WHITE } else { WEAK }));
+                let b = egui::Button::new(job)
+                    .fill(if selected { accent_tint() } else { Color32::TRANSPARENT })
+                    .stroke(Stroke::NONE)
+                    .rounding(Rounding::same(12.0))
+                    .min_size(vec2(162.0, 40.0));
                 if ui.add(b).clicked() {
                     st.tab = tab;
                 }
@@ -332,15 +414,15 @@ pub fn panel_ui(ctx: &egui::Context, shared: &Arc<Shared>, st: &mut PanelState, 
             ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
                 ui.label(RichText::new(crate::build_info()).small().color(WEAK));
                 ui.add_space(2.0);
-                let quit = egui::Button::new(RichText::new("⏻  Выход").color(WEAK)).fill(Color32::TRANSPARENT).min_size(vec2(130.0, 26.0));
+                let quit = egui::Button::new(RichText::new("⏻  Выход").color(WEAK)).fill(Color32::TRANSPARENT).min_size(vec2(162.0, 28.0));
                 if ui.add(quit).on_hover_text("Полностью закрыть программу. Крестик окна только прячет панель в трей.").clicked() {
                     shared.send(Command::Quit);
                 }
                 if !DONATE_URL.is_empty() {
-                    let b = egui::Button::new(RichText::new("♥  Поддержать").color(Color32::BLACK))
-                        .fill(GOLD)
-                        .rounding(Rounding::same(8.0))
-                        .min_size(vec2(130.0, 30.0));
+                    let b = egui::Button::new(RichText::new("♥  Поддержать").color(on_accent()))
+                        .fill(accent())
+                        .rounding(Rounding::same(12.0))
+                        .min_size(vec2(162.0, 32.0));
                     if ui.add(b).on_hover_text("Программа бесплатная. Если она вам помогает — можно угостить енотика печенькой.").clicked() {
                         shared.send(Command::OpenUrl(DONATE_URL.to_string()));
                     }
@@ -349,7 +431,7 @@ pub fn panel_ui(ctx: &egui::Context, shared: &Arc<Shared>, st: &mut PanelState, 
                 let space = ui.available_height();
                 if space > 90.0 {
                     let h = space.min(170.0) - 6.0;
-                    let r = crate::mascot::widget(ui, vec2(130.0, h), mascot_mood(shared));
+                    let r = crate::mascot::widget(ui, vec2(162.0, h), mascot_mood(shared));
                     if r.clicked() && !DONATE_URL.is_empty() {
                         shared.send(Command::OpenUrl(DONATE_URL.to_string()));
                     }
@@ -357,7 +439,9 @@ pub fn panel_ui(ctx: &egui::Context, shared: &Arc<Shared>, st: &mut PanelState, 
             });
         });
 
-    egui::CentralPanel::default().frame(egui::Frame::none().fill(BG).inner_margin(Margin::same(16.0))).show(ctx, |ui| {
+    egui::CentralPanel::default().frame(egui::Frame::none().fill(BG).inner_margin(Margin::symmetric(24.0, 20.0))).show(ctx, |ui| {
+        header(ui, shared, st.tab);
+        ui.add_space(12.0);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(ui.available_width());
             dirty |= match st.tab {
@@ -391,28 +475,26 @@ fn mascot_mood(shared: &Arc<Shared>) -> crate::mascot::Mood {
     }
 }
 
-fn header(ui: &mut Ui, shared: &Arc<Shared>) {
-    let (game, lang) = {
-        let c = shared.cfg();
-        (crate::config::profile(&c.general.profile).name.to_string(), c.source_lang())
-    };
+/// Top line of the content: the page name and what the program is doing.
+fn header(ui: &mut Ui, shared: &Arc<Shared>, tab: Tab) {
+    let lang = shared.cfg().source_lang();
     let server = shared.ui.lock().unwrap().server.clone();
+    let title = match tab {
+        Tab::Home => "Главная",
+        Tab::Settings => "Настройки",
+        Tab::Dictionaries => "Словари",
+        Tab::Check => "Проверка",
+        Tab::Help => "Справка",
+    };
     ui.horizontal(|ui| {
-        // Seal-like logo.
-        let (rect, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
-        ui.painter().rect_filled(rect, Rounding::same(6.0), RED);
-        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "译", FontId::proportional(21.0), Color32::from_rgb(250, 240, 225));
-        ui.add_space(6.0);
-        ui.vertical(|ui| {
-            ui.label(RichText::new("Manga Local").size(19.0).family(FontFamily::Name("bold".into())));
-            ui.label(RichText::new(format!("{game} · {} → русский", lang.name_ru())).small().color(WEAK));
-        });
+        ui.label(RichText::new(title).size(24.0).family(FontFamily::Name("bold".into())).color(TEXT));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            status_pill(ui, &format!("{} → русский", lang.name_ru()), WEAK);
             match server {
-                Some(s) if s.is_ready() => status_pill(ui, "Готов", GREEN),
-                Some(crate::state::ServerStatus::Failed(_)) => status_pill(ui, "Ошибка модели", RED),
-                Some(crate::state::ServerStatus::Starting(_)) => status_pill(ui, "Загрузка модели…", YELLOW),
-                _ => status_pill(ui, "Запуск…", YELLOW),
+                Some(s) if s.is_ready() => status_pill(ui, "● Нейросеть готова", GREEN),
+                Some(crate::state::ServerStatus::Failed(_)) => status_pill(ui, "● Ошибка модели", RED),
+                Some(crate::state::ServerStatus::Starting(_)) => status_pill(ui, "● Загрузка модели…", YELLOW),
+                _ => status_pill(ui, "● Запуск…", YELLOW),
             }
         });
     });
@@ -489,29 +571,31 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
         ui.add_space(8.0);
     }
 
-    // Big actions.
-    let w = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).floor();
+    // Main action, then the others as tiles.
+    let sub_f8 = if has_interface { "Перевод включён — нажмите ещё раз, чтобы убрать" } else { "Все пузыри на экране. Листайте — перевод появится сам" };
+    if hero_action(ui, "Перевести страницу", sub_f8, &hk.screen_translate, has_interface) {
+        // ScreenTranslate hides the panel itself and waits until it is off the screen.
+        shared.send(Command::ScreenTranslate);
+    }
+    ui.add_space(4.0);
+    let gap = ui.spacing().item_spacing.x;
+    let w = ((ui.available_width() - 2.0 * gap) / 3.0).floor();
     ui.horizontal(|ui| {
-        if big_action(ui, "Перевести страницу", "Все пузыри на экране — повторное нажатие убирает перевод", &hk.screen_translate, has_interface, w) {
-            // ScreenTranslate hides the panel itself and waits until it is off the screen.
-            shared.send(Command::ScreenTranslate);
-        }
-        if big_action(ui, "Стоп-кадр", "Снимок экрана: нажмите на текст — перевод", &hk.freeze, false, w) {
+        if big_action(ui, "Стоп-кадр", "Нажмите на текст — перевод", &hk.freeze, false, w) {
             shared.send(Command::Freeze);
         }
-    });
-    ui.horizontal(|ui| {
         let sub = if show_original { "Сейчас показан оригинал" } else { "Сейчас показан перевод" };
         if big_action(ui, "Оригинал / перевод", sub, &hk.show_original, show_original, w) {
             shared.send(Command::ToggleOriginal);
         }
-        if big_action(ui, "Плохой перевод", "Забыть последний перевод и перевести заново", &hk.bad_translation, false, w) {
+        if big_action(ui, "Плохой перевод", "Перевести страницу заново", &hk.bad_translation, false, w) {
             shared.send(Command::BadTranslation);
         }
     });
+    ui.add_space(4.0);
     // Chapter files: a folder, ZIP or CBZ — the translation is lettered into the pictures.
     let files_progress = shared.ui.lock().unwrap().files_progress.clone();
-    let full = w * 2.0 + ui.spacing().item_spacing.x;
+    let full = ui.available_width();
     match &files_progress {
         Some(p) => {
             if big_action(ui, "Перевод главы идёт… (нажмите, чтобы остановить)", p, "", true, full) {
@@ -637,14 +721,13 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
 
 fn stat(ui: &mut Ui, value: &str, label: &str) {
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new(value).size(19.0).family(FontFamily::Name("bold".into())).color(GOLD));
+        ui.label(RichText::new(value).size(19.0).family(FontFamily::Name("bold".into())).color(accent()));
         ui.label(RichText::new(label).small().color(WEAK));
     });
 }
 
 fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool {
     let mut dirty = false;
-    ui.heading("Настройки");
     hint(ui, "Изменения применяются сразу и сохраняются автоматически.");
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -659,6 +742,36 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
     let mut game_changed = false;
     let mut any = false;
 
+    any |= search_card(ui, "Вид панели", "вид панели цвет оформления тема бирюза янтарь лаванда голубой коралл свой цвет", |ui| {
+        let g = &mut c.general;
+        if search_hit("цвет оформления бирюза янтарь лаванда голубой коралл свой цвет") {
+            ui.label("Цвет оформления");
+            hint(ui, "Кнопки, выбранный раздел и переключатели. Можно взять готовый или свой любой.");
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for (name, rgb) in ACCENTS {
+                    let selected = g.accent == *rgb;
+                    let col = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+                    let (rect, resp) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::click());
+                    ui.painter().circle_filled(rect.center(), 15.0, col);
+                    if selected {
+                        ui.painter().circle_stroke(rect.center(), 16.5, Stroke::new(2.5, Color32::WHITE));
+                    }
+                    if resp.on_hover_text(*name).clicked() && !selected {
+                        g.accent = *rgb;
+                        dirty = true;
+                    }
+                }
+                ui.add_space(10.0);
+                ui.label(RichText::new("Свой:").color(WEAK));
+                let mut rgb = g.accent;
+                if ui.color_edit_button_srgb(&mut rgb).changed() {
+                    g.accent = rgb;
+                    dirty = true;
+                }
+            });
+        }
+    });
     any |= search_card(ui, "Где читаете", "где читаете браузер сайт весь экран программа язык текста корейский японский китайский английский заголовок окна название тайтла манга манхва маньхуа", |ui| {
         let g = &mut c.general;
         let options: Vec<(&str, &str)> = crate::config::PROFILES.iter().map(|p| (p.id, p.name)).collect();
@@ -775,7 +888,6 @@ fn page_dictionaries(ui: &mut Ui, shared: &Arc<Shared>, edits: &mut HashMap<Stri
         let u = shared.ui.lock().unwrap();
         (u.recent.iter().cloned().collect::<Vec<_>>(), u.dict_counts)
     };
-    ui.heading("Словари");
     hint(ui, "Так переводчик узнаёт имена, термины и ваш стиль. Файлы открываются в Блокноте; после правки нажмите «Перечитать».");
     ui.add_space(6.0);
 
@@ -846,7 +958,7 @@ fn page_dictionaries(ui: &mut Ui, shared: &Arc<Shared>, edits: &mut HashMap<Stri
                     ui.label(RichText::new(format!("{} · {} мс{}", r.model, r.ms, if r.cached { " · из памяти" } else { "" })).small().color(WEAK));
                     if *e != r.dst {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.add(egui::Button::new(RichText::new("Сохранить").color(Color32::BLACK)).fill(GOLD)).clicked() {
+                            if ui.add(egui::Button::new(RichText::new("Сохранить").color(Color32::BLACK)).fill(accent())).clicked() {
                                 shared.send(Command::SaveCorrection { src: r.src.clone(), dst: e.clone() });
                             }
                         });
@@ -863,18 +975,17 @@ fn page_check(ui: &mut Ui, shared: &Arc<Shared>, test_input: &mut String, ocr_vi
         let u = shared.ui.lock().unwrap();
         (u.test_result.clone(), u.bench_progress.clone())
     };
-    ui.heading("Проверка");
     ui.add_space(6.0);
     card(ui, "Видно ли перевод поверх браузера", |ui| {
         hint(ui, "Нажмите кнопку и сразу переключитесь в браузер (Alt+Tab). 10 секунд в центре экрана должна гореть надпись. Если её не видно — перевод тоже не будет виден: напишите об этом.");
-        if ui.add(egui::Button::new(RichText::new("Показать надпись поверх окон").color(Color32::BLACK)).fill(GOLD)).clicked() {
+        if ui.add(egui::Button::new(RichText::new("Показать надпись поверх окон").color(Color32::BLACK)).fill(accent())).clicked() {
             shared.send(Command::TestOverlay);
         }
     });
     ui.add_space(8.0);
     card(ui, "Самодиагностика", |ui| {
         hint(ui, "Проверит распознавание текста, нейросеть, окно браузера, окно перевода, снимок экрана и горячие клавиши. Откройте мангу перед проверкой. Отчёт откроется в Блокноте — его можно прислать разработчику.");
-        if ui.add(egui::Button::new(RichText::new("Проверить всё").color(Color32::BLACK)).fill(GOLD)).clicked() {
+        if ui.add(egui::Button::new(RichText::new("Проверить всё").color(Color32::BLACK)).fill(accent())).clicked() {
             shared.send(Command::Diagnose);
         }
     });
@@ -883,7 +994,7 @@ fn page_check(ui: &mut Ui, shared: &Arc<Shared>, test_input: &mut String, ocr_vi
         hint(ui, "Вставьте корейский, японский или китайский текст — например, с сайта — и нажмите Enter.");
         let resp = ui.add(egui::TextEdit::multiline(test_input).hint_text("뭐야, 벌써 왔어?").desired_rows(2).desired_width(f32::INFINITY));
         let enter = resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-        if (ui.add(egui::Button::new(RichText::new("Перевести").color(Color32::BLACK)).fill(GOLD)).clicked() || enter) && !test_input.trim().is_empty() {
+        if (ui.add(egui::Button::new(RichText::new("Перевести").color(Color32::BLACK)).fill(accent())).clicked() || enter) && !test_input.trim().is_empty() {
             shared.send(Command::TestTranslate(test_input.trim().to_string()));
         }
         if let Some(r) = &test_result {
@@ -929,7 +1040,6 @@ fn page_check(ui: &mut Ui, shared: &Arc<Shared>, test_input: &mut String, ocr_vi
 
 fn page_help(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
     let hk = shared.cfg().hotkeys;
-    ui.heading("Справка");
     ui.add_space(6.0);
     card(ui, "Быстрый старт", |ui| {
         for (i, s) in [
@@ -943,7 +1053,7 @@ fn page_help(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
         .enumerate()
         {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(format!("{}.", i + 1)).color(GOLD).strong());
+                ui.label(RichText::new(format!("{}.", i + 1)).color(accent()).strong());
                 ui.label(s);
             });
         }

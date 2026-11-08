@@ -39,6 +39,8 @@ pub struct General {
     pub tray_hint_shown: bool,
     /// The comic font replaced the old default «Segoe UI» once (older configs).
     pub comic_font_set: bool,
+    /// Accent colour of the panel (R, G, B); бирюза by default.
+    pub accent: [u8; 3],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +225,7 @@ impl Default for General {
             visible_in_screenshots: false,
             tray_hint_shown: false,
             comic_font_set: false,
+            accent: [60, 201, 180],
         }
     }
 }
