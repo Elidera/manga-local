@@ -84,34 +84,35 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
     let mut done = 0;
     // The last bubbles of the previous page, for the model's context.
     let mut prev: Vec<(String, String)> = Vec::new();
+    // Conveyor: while the model translates page i, page i + 1 is decoded and
+    // read by OCR (the two use different hardware).
+    let keep_sfx = cfg.interface.sfx == "keep";
+    let start = |i: usize| -> Result<tokio::task::JoinHandle<Result<Prepared, String>>, String> {
+        let bytes = ch.read(i)?;
+        let (sh, tr, ocr) = (shared.clone(), tr.clone(), ocr.clone());
+        Ok(tokio::spawn(async move { prepare(&sh, &tr, &ocr, lang, keep_sfx, bytes).await }))
+    };
+    progress_line(shared, &ch.name, 0, total, "распознаю");
+    let mut next = Some(start(0)?);
     for (i, page) in ch.pages.iter().enumerate() {
+        let Some(job) = next.take() else { break };
+        let prepared = job.await.map_err(|e| format!("распознавание: {e}"))??;
+        if i + 1 < total && !STOP.load(Ordering::SeqCst) {
+            next = Some(start(i + 1)?);
+        }
         if STOP.load(Ordering::SeqCst) {
             out.finish()?;
             return Ok((out_path, done, true));
         }
-        let progress = |stage: &str| {
-            let text = format!("«{}»: страница {} из {total} — {stage}", ch.name, i + 1);
-            shared.ui(|u| u.files_progress = Some(text));
-        };
-        progress("распознаю");
-        let bytes = ch.read(i)?;
+        let progress = |stage: &str| progress_line(shared, &ch.name, i, total, stage);
         let (out_name, jpeg) = chapter::output_name(page);
-        let mut frame = match chapter::decode(&bytes) {
-            Ok(f) => f,
-            Err(e) => {
-                // Not a picture after all: copied as it is.
-                tracing::warn!("{page}: {e}");
-                out.add(page.rsplit(['/', '\\']).next().unwrap_or(page), &bytes)?;
-                continue;
-            }
+        let Prepared { bytes, frame, items, lines } = prepared;
+        let Some(mut frame) = frame else {
+            // Not a picture after all: copied as it is.
+            out.add(page.rsplit(['/', '\\']).next().unwrap_or(page), &bytes)?;
+            continue;
         };
-        let lines = recognize(ocr, &frame, lang).await?;
-        let ja = crate::jaocr::engine(shared).await;
-        let mut items = interface::page_items(&lines, lang, tr, &frame, ja).await;
-        if cfg.interface.sfx == "keep" {
-            items.retain(|it| !it.sfx);
-        }
-        tracing::info!(target: "files", "{page}: {} строк → {} пузырей", lines.len(), items.len());
+        tracing::info!(target: "files", "{page}: {lines} строк → {} пузырей", items.len());
         if items.is_empty() {
             // No text: the page is kept unchanged (no re-encoding).
             out.add(page.rsplit(['/', '\\']).next().unwrap_or(page), &bytes)?;
@@ -158,6 +159,41 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
     }
     out.finish()?;
     Ok((out_path, done, false))
+}
+
+fn progress_line(shared: &Shared, name: &str, i: usize, total: usize, stage: &str) {
+    let text = format!("«{name}»: страница {} из {total} — {stage}", i + 1);
+    shared.ui(|u| u.files_progress = Some(text));
+}
+
+/// A page read and recognised, ready for translation.
+struct Prepared {
+    bytes: Vec<u8>,
+    /// None: not a picture (copied as it is).
+    frame: Option<manga_core::image::Frame>,
+    items: Vec<crate::state::InterfaceItem>,
+    lines: usize,
+}
+
+async fn prepare(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, lang: manga_core::lang::Lang, keep_sfx: bool, bytes: Vec<u8>) -> Result<Prepared, String> {
+    let decoded = {
+        let b = bytes.clone();
+        tokio::task::spawn_blocking(move || chapter::decode(&b)).await.map_err(|e| e.to_string())?
+    };
+    let frame = match decoded {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("{e}");
+            return Ok(Prepared { bytes, frame: None, items: vec![], lines: 0 });
+        }
+    };
+    let lines = recognize(ocr, &frame, lang).await?;
+    let ja = crate::jaocr::engine(shared).await;
+    let mut items = interface::page_items(&lines, lang, tr, &frame, ja).await;
+    if keep_sfx {
+        items.retain(|it| !it.sfx);
+    }
+    Ok(Prepared { bytes, frame: Some(frame), items, lines: lines.len() })
 }
 
 /// OCR of a whole page; tall webtoon strips in overlapping pieces of normal
