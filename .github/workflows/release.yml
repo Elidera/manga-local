@@ -95,6 +95,7 @@ jobs:
       - name: Screenshot tests (real Windows OCR on tests/screens)
         shell: pwsh
         continue-on-error: true
+        timeout-minutes: 5
         run: |
           $p = Start-Process -FilePath dist\manga-local.exe -ArgumentList '--selftest','tests\screens','--out','selftest-report.md' -Wait -PassThru
           Write-Host "exit code $($p.ExitCode)"
