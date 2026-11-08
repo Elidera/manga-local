@@ -48,6 +48,25 @@ def bubble(d, center, lines, font, pad=(46, 34)):
         y += lh + gap
 
 
+def vbubble(d, center, columns, font):
+    """A tall bubble with vertical Japanese: columns right to left, characters top to bottom."""
+    cx, cy = center
+    step = font.size + 4
+    colw = font.size + 14
+    rows = max(len(c) for c in columns)
+    tw, th = colw * len(columns), step * rows
+    w, h = tw + 90, th + 110
+    d.ellipse([cx - w // 2, cy - h // 2, cx + w // 2, cy + h // 2], fill=(255, 255, 255), outline=(0, 0, 0), width=4)
+    x = cx + tw // 2 - colw
+    for col in columns:
+        y = cy - th // 2
+        for ch in col:
+            b = d.textbbox((0, 0), ch, font=font)
+            d.text((x + (colw - (b[2] - b[0])) // 2 - b[0], y - b[1] + (step - (b[3] - b[1])) // 2), ch, font=font, fill=(10, 10, 10))
+            y += step
+        x -= colw
+
+
 def page(bubbles, font_path, caption, seed, size=34):
     img = Image.new("RGB", (1000, 1400), (255, 255, 255))
     d = ImageDraw.Draw(img)
@@ -88,6 +107,14 @@ def main(out):
         ((620, 1150), ["LET'S GO. THIS TIME WE", "CLEAR IT TOGETHER."]),
     ]
     page(en, COMIC_FONT, None, 11, size=32).save(out / "webtoon_en_gate.png")
+    # Real manga: vertical Japanese (Windows OCR cannot read it; the manga OCR model can).
+    img = page([], JA_FONT, "Vol. 2", 5)
+    d = ImageDraw.Draw(img)
+    vf = ImageFont.truetype(JA_FONT, 36)
+    vbubble(d, (720, 330), ["待って！", "置いてかないで"], vf)
+    vbubble(d, (260, 330), ["遅いぞ", "早く来い"], vf)
+    vbubble(d, (650, 1020), ["約束だからね", "絶対だよ"], vf)
+    img.save(out / "manga_ja_vertical.png")
 
 
 if __name__ == "__main__":
