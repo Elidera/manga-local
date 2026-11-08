@@ -66,3 +66,16 @@ fn glossaries_do_not_cross_languages() {
         assert!(g.find_in(l, 24).is_empty(), "{l}");
     }
 }
+
+#[test]
+fn korean_address_words() {
+    let mut g = Glossary::new();
+    g.load_tsv(include_str!("../../../assets/glossary/40_manhwa_ko.tsv"));
+    let found = |s: &str| g.find_in(s, 24).iter().map(|t| t.dst.clone()).collect::<Vec<_>>();
+    assert!(found("형, 그만해! 이러다 다 죽어!").contains(&"хён".to_string()));
+    assert!(found("선배, 저 오늘 고백할 거예요.").contains(&"сонбэ".to_string()));
+    // «형» inside ordinary words (shape, brothers, doll) is not «хён».
+    for s in ["이 형태는 처음 봐.", "우리는 형제야.", "인형을 샀어."] {
+        assert!(!found(s).contains(&"хён".to_string()), "{s}");
+    }
+}
