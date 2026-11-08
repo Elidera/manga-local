@@ -23,7 +23,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 const WM_TRAY: u32 = WM_APP + 1;
 const ID_OPEN: usize = 1;
-const ID_DIALOGUE: usize = 2;
 const ID_EXIT: usize = 3;
 
 static SENDER: OnceLock<UnboundedSender<Command>> = OnceLock::new();
@@ -67,7 +66,6 @@ fn base_data(hwnd: HWND) -> NOTIFYICONDATAW {
 unsafe fn show_menu(hwnd: HWND) {
     let Ok(menu) = CreatePopupMenu() else { return };
     let _ = AppendMenuW(menu, MF_STRING, ID_OPEN, &HSTRING::from("Открыть панель"));
-    let _ = AppendMenuW(menu, MF_STRING, ID_DIALOGUE, &HSTRING::from("Перевод диалогов: вкл / выкл"));
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
     let _ = AppendMenuW(menu, MF_STRING, ID_EXIT, &HSTRING::from("Выход"));
     let mut pt = POINT::default();
@@ -93,7 +91,6 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             WM_COMMAND => {
                 match wp.0 & 0xFFFF {
                     ID_OPEN => send(Command::ShowPanel),
-                    ID_DIALOGUE => send(Command::ToggleDialogue),
                     ID_EXIT => send(Command::Quit),
                     _ => {}
                 }

@@ -7,15 +7,11 @@ fn main() {
 }
 
 #[cfg(windows)]
-mod auto;
-#[cfg(windows)]
 mod bench;
 #[cfg(windows)]
 mod capture;
 #[cfg(windows)]
 mod config;
-#[cfg(windows)]
-mod dialogue;
 #[cfg(windows)]
 mod extras;
 #[cfg(windows)]
@@ -80,8 +76,8 @@ mod app {
     use crate::paths::Paths;
     use crate::state::{Command, Shared, UiState};
     use crate::translate::Translator;
-    use crate::{bench, capture, dialogue, files, hotkeys, interface, ui, win};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use crate::{bench, files, hotkeys, interface, ui, win};
+    use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::{Arc, Mutex, OnceLock, RwLock};
     use tokio::sync::mpsc;
 
@@ -142,10 +138,9 @@ mod app {
         let shared = Arc::new(Shared {
             paths: paths.clone(),
             cfg: RwLock::new(cfg.clone()),
-            ui: Mutex::new(UiState { dialogue_on: cfg.dialogue.enabled, show_original: cfg.dialogue.show_original, ..Default::default() }),
+            ui: Mutex::new(UiState { show_original: cfg.dialogue.show_original, ..Default::default() }),
             cmd: cmd_tx.clone(),
             egui: OnceLock::new(),
-            dialogue_seq: AtomicU64::new(0),
             interface_gen: AtomicU64::new(0),
             reset_watcher: AtomicBool::new(false),
             overlay_px: Mutex::new(Vec::new()),
@@ -196,9 +191,6 @@ mod app {
         }
         let (srv_tx, srv_rx) = mpsc::unbounded_channel::<ServerCmd>();
         rt.spawn(server::supervise(shared.clone(), client, srv_rx));
-        if let Some(o) = &ocr {
-            rt.spawn(dialogue::run(shared.clone(), translator.clone(), o.clone()));
-        }
         rt.spawn(dispatcher(shared.clone(), translator.clone(), ocr.clone(), cmd_rx, srv_tx));
 
         // The panel is the only visible sign that the program runs: always show it at start.
@@ -252,15 +244,6 @@ mod app {
         while let Some(cmd) = rx.recv().await {
             tracing::info!("команда: {}", format!("{cmd:?}").chars().take(120).collect::<String>());
             match cmd {
-                Command::ToggleDialogue => {
-                    shared.reset_watcher.store(true, Ordering::SeqCst);
-                    shared.ui(|u| {
-                        u.dialogue_on = !u.dialogue_on;
-                        if !u.dialogue_on {
-                            u.dialogue = None;
-                        }
-                    });
-                }
                 Command::ScreenTranslate => match &ocr {
                     Some(o) => {
                         let (sh, tr, o) = (shared.clone(), tr.clone(), o.clone());
@@ -280,64 +263,6 @@ mod app {
                     None => shared.ui(|u| u.notice("OCR не готов — перевод экрана недоступен")),
                 },
                 Command::ToggleOriginal => shared.ui(|u| u.show_original = !u.show_original),
-                Command::SelectRegion => {
-                    let selecting = shared.ui.lock().unwrap().selecting_region;
-                    if selecting {
-                        shared.ui(|u| {
-                            u.selecting_region = false;
-                            u.region_shot = None;
-                            u.restore_panel();
-                        });
-                    } else {
-                        // Hide our own windows, let them disappear, then take the screenshot.
-                        shared.ui(|u| {
-                            u.dialogue = None;
-                            u.interface = None;
-                            u.hide_panel_for_shot();
-                        });
-                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                        let (sw, sh) = win::screen_size();
-                        match capture::capture(capture::PxRect { x: 0, y: 0, w: sw, h: sh }) {
-                            Ok(f) => shared.ui(|u| {
-                                u.region_shot = Some(Arc::new(f));
-                                u.selecting_region = true;
-                            }),
-                            Err(e) => shared.ui(|u| u.notice(format!("Снимок экрана: {e}"))),
-                        }
-                    }
-                }
-                Command::CancelRegion => shared.ui(|u| {
-                    u.selecting_region = false;
-                    u.region_shot = None;
-                    u.restore_panel();
-                }),
-                Command::RegionSelected(r) => {
-                    {
-                        let mut c = shared.cfg.write().unwrap();
-                        c.dialogue.region = r;
-                        c.dialogue.region_set = true;
-                        // A strip means "watch only here"; half the screen or more is
-                        // better served by the auto mode (and too big for region mode).
-                        if r[2] * r[3] < 0.5 {
-                            c.dialogue.mode = "region".into();
-                        } else {
-                            c.dialogue.mode = "auto".into();
-                        }
-                    }
-                    shared.save_config();
-                    shared.reset_watcher.store(true, Ordering::SeqCst);
-                    shared.ui(|u| {
-                        u.selecting_region = false;
-                        u.restore_panel();
-                        u.region_shot = None;
-                        if r[2] * r[3] < 0.5 {
-                            u.notice("Область субтитров сохранена. Режим «только область»; вернуть «Авто: весь экран» можно в настройках.");
-                        } else {
-                            u.notice("Область почти на весь экран — оставляю режим «Авто: весь экран», он для этого и сделан.");
-                        }
-                    });
-                    tracing::info!("новая область субтитров: {r:?}");
-                }
                 Command::TogglePanel => shared.ui(|u| {
                     u.panel_open = !u.panel_open;
                     u.focus_panel = u.panel_open;
@@ -393,18 +318,6 @@ mod app {
                         u.ocr_status = Some(status);
                     });
                     shared.save_config();
-                }
-                Command::EditBox => {
-                    let on = shared.ui(|u| {
-                        u.edit_box = !u.edit_box;
-                        u.edit_box
-                    });
-                    if on {
-                        // Editing the window means the user wants to use it.
-                        shared.cfg.write().unwrap().dialogue.position = "box".into();
-                    }
-                    shared.save_config();
-                    tracing::info!("окно перевода: {}", if on { "настройка" } else { "готово" });
                 }
                 Command::SaveCase => match &ocr {
                     Some(o) => {

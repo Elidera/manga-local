@@ -22,18 +22,6 @@ pub struct PxRect {
     pub h: i32,
 }
 
-impl PxRect {
-    /// From fractions of the primary screen.
-    pub fn from_fraction(f: [f32; 4], screen: (i32, i32)) -> PxRect {
-        let (sw, sh) = (screen.0 as f32, screen.1 as f32);
-        let x = (f[0].clamp(0.0, 1.0) * sw) as i32;
-        let y = (f[1].clamp(0.0, 1.0) * sh) as i32;
-        let w = ((f[2].clamp(0.0, 1.0) * sw) as i32).clamp(8, screen.0 - x);
-        let h = ((f[3].clamp(0.0, 1.0) * sh) as i32).clamp(8, screen.1 - y);
-        PxRect { x, y, w, h }
-    }
-}
-
 /// What to read: the reader window's picture when it is in front (no taskbar,
 /// no other windows), otherwise the whole primary screen.
 pub fn game_area(cfg: &crate::config::Config) -> PxRect {

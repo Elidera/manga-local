@@ -461,15 +461,12 @@ fn mascot_mood(shared: &Arc<Shared>) -> crate::mascot::Mood {
     use crate::state::ServerStatus;
     let u = shared.ui.lock().unwrap();
     let error = matches!(u.server, Some(ServerStatus::Failed(_))) || matches!(u.ocr_status, Some(Err(_)));
-    let working = u.dialogue.as_ref().map_or(false, |d| d.pending)
-        || u.interface.as_ref().map_or(false, |i| i.pending > 0)
+    let working = u.interface.as_ref().map_or(false, |i| i.pending > 0)
         || !matches!(u.server, Some(ServerStatus::Ready { .. }) | Some(ServerStatus::Failed(_)));
     if error {
         Mood::Error
     } else if working {
         Mood::Working
-    } else if u.dialogue_on && u.paused_unfocused {
-        Mood::Sleeping
     } else {
         Mood::Idle
     }
@@ -518,9 +515,7 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
     // Checklist until everything is ready.
     let model_ok = server.as_ref().map(|s| s.is_ready());
     let ocr_ok = ocr_status.as_ref().map(|r| r.is_ok());
-    let auto_mode = cfg.dialogue.mode == "auto";
-    let region_ok = auto_mode || cfg.dialogue.region_set;
-    if model_ok != Some(true) || ocr_ok != Some(true) || !region_ok {
+    if model_ok != Some(true) || ocr_ok != Some(true) {
         card(ui, "Подготовка", |ui| {
             let model_detail = match &server {
                 Some(crate::state::ServerStatus::Starting(s)) => s.clone(),
@@ -549,23 +544,6 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
                 manga_core::lang::Lang::Ja => "Распознавание японского текста (Windows OCR)",
             };
             check_item(ui, ocr_ok, ocr_title, &ocr_detail);
-            ui.horizontal(|ui| {
-                let (title, detail) = if auto_mode {
-                    ("Текст ищется по всему экрану (авто)", "")
-                } else if region_ok {
-                    ("Область субтитров выбрана", "")
-                } else {
-                    ("Область субтитров выбрана", "Откройте игру с субтитрами и выберите область")
-                };
-                check_item(ui, Some(region_ok), title, detail);
-                if !region_ok {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("Выбрать…").clicked() {
-                            shared.send(Command::SelectRegion);
-                        }
-                    });
-                }
-            });
             check_item(ui, None, "Откройте мангу в браузере", "Страница должна быть видна на экране. F8 — и дальше просто листайте, перевод появляется сам");
         });
         ui.add_space(8.0);

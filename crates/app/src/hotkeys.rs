@@ -54,10 +54,8 @@ unsafe extern "system" fn key_hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
 /// Returns human-readable problems (unparsable or already taken keys).
 pub fn spawn(keys: &Hotkeys, tx: UnboundedSender<Command>) -> std::sync::mpsc::Receiver<Vec<String>> {
     let table: Vec<(String, Command)> = vec![
-        (keys.toggle_dialogue.clone(), Command::ToggleDialogue),
         (keys.screen_translate.clone(), Command::ScreenTranslate),
         (keys.show_original.clone(), Command::ToggleOriginal),
-        (keys.select_region.clone(), Command::SelectRegion),
         (keys.panel.clone(), Command::TogglePanel),
         (keys.save_case.clone(), Command::SaveCase),
         (keys.freeze.clone(), Command::Freeze),

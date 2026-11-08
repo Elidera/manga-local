@@ -11,7 +11,7 @@ use manga_core::cache::Store;
 use manga_core::fixes::Fixes;
 use manga_core::glossary::Glossary;
 use manga_core::history::History;
-use manga_core::memory::{FuzzyMemory, NameBook};
+use manga_core::memory::FuzzyMemory;
 use manga_core::prompt::{self, PromptInput, PromptStyle, Reject, TextKind};
 
 pub struct Translator {
@@ -25,8 +25,6 @@ pub struct Translator {
     /// Recent dialogue translations found by similarity (OCR reads a line a bit
     /// differently each time; without this it was translated again and again).
     fuzzy: Mutex<FuzzyMemory>,
-    /// All OCR spellings of a speaker name → one.
-    names: Mutex<NameBook>,
     /// The title whose dictionary is loaded (see `ensure_title`).
     title: Mutex<String>,
     /// When the last dialogue line was translated: after a long silence the
@@ -167,7 +165,6 @@ impl Translator {
             history: Mutex::new(History::new(context_lines)),
             fuzzy: Mutex::new(FuzzyMemory::new(400, 0.9)),
             title: Mutex::new(String::new()),
-            names: Mutex::new(NameBook::new()),
             last_dialogue: Mutex::new(None),
             gate: tokio::sync::Mutex::new(()),
         }
@@ -253,9 +250,6 @@ impl Translator {
     }
 
     /// One spelling per speaker name, whatever OCR read this time.
-    pub fn canonical_name(&self, s: &str) -> String {
-        self.names.lock().unwrap().canonical(s)
-    }
 
     fn fix_ru(&self, s: &str) -> String {
         self.fixes.lock().unwrap().apply_ru(s)

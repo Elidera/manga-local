@@ -63,11 +63,10 @@ pub async fn bad_translation(shared: Arc<Shared>, tr: Arc<Translator>) {
     match res {
         Ok(o) => shared.ui(|u| {
             // Replace the bad text wherever it is still shown.
-            for l in u.auto_lines.iter_mut().filter(|l| l.translation == old) {
-                l.translation = o.text.clone();
-            }
-            if let Some(d) = u.dialogue.as_mut().filter(|d| d.translation == old) {
-                d.translation = o.text.clone();
+            if let Some(v) = u.interface.as_mut() {
+                for it in v.items.iter_mut().filter(|it| it.dst.as_deref() == Some(old.as_str())) {
+                    it.dst = Some(o.text.clone());
+                }
             }
             if let Some(front) = u.recent.front_mut().filter(|f| f.src == r.src) {
                 front.dst = o.text.clone();

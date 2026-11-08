@@ -3,7 +3,7 @@
 use crate::config::Config;
 use crate::paths::Paths;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
 use manga_core::image::Rect;
@@ -53,12 +53,8 @@ pub struct FreezeLine {
 
 #[derive(Debug, Clone)]
 pub enum Command {
-    ToggleDialogue,
     ScreenTranslate,
     ToggleOriginal,
-    SelectRegion,
-    RegionSelected([f32; 4]),
-    CancelRegion,
     TogglePanel,
     ShowPanel,
     SwitchModel(String),
@@ -82,8 +78,6 @@ pub enum Command {
     Quit,
     /// Show a test label over the game for 10 s (is the overlay visible at all?).
     TestOverlay,
-    /// Start / finish moving and resizing the translation window on screen.
-    EditBox,
     /// Save the screen as a new screenshot test case (Ctrl+F9).
     SaveCase,
     /// Dictionaries for sharing: write the bundle to this file / merge one in.
@@ -106,28 +100,6 @@ pub enum Command {
     RunBench,
     SaveConfig,
     Open(std::path::PathBuf),
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DialogueView {
-    pub source: String,
-    pub speaker: Option<String>,
-    pub translation: String,
-    pub pending: bool,
-    pub error: Option<String>,
-    pub from_cache: bool,
-}
-
-/// A speech-like text found anywhere on screen in «Авто» mode, with its translation.
-#[derive(Debug, Clone)]
-pub struct AutoLine {
-    pub id: u64,
-    /// Where the original text is (physical screen pixels).
-    pub rect: Rect,
-    pub source: String,
-    pub speaker: Option<String>,
-    pub translation: String,
-    pub pending: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -206,15 +178,8 @@ fn ema(prev: f32, x: f32) -> f32 {
 
 #[derive(Debug, Default)]
 pub struct UiState {
-    pub dialogue: Option<DialogueView>,
-    /// «Авто» mode: translations of texts found anywhere on screen.
-    pub auto_lines: Vec<AutoLine>,
     pub interface: Option<InterfaceView>,
-    pub dialogue_on: bool,
     pub show_original: bool,
-    pub selecting_region: bool,
-    /// Screenshot shown in the region picker.
-    pub region_shot: Option<std::sync::Arc<manga_core::image::Frame>>,
     /// Freeze frame being shown (Ctrl+F8).
     pub freeze: Option<FreezeView>,
     /// Hotkeys that could not be registered (for the self-check).
@@ -242,11 +207,8 @@ pub struct UiState {
     pub dict_counts: (usize, usize),
     /// Result of the panel's "check translation" field.
     pub test_result: Option<String>,
-    pub paused_unfocused: bool,
     /// Until when the test label is shown over the screen.
     pub test_overlay_until: Option<std::time::Instant>,
-    /// The translation window is being moved / resized with the mouse.
-    pub edit_box: bool,
 }
 
 impl UiState {
@@ -293,8 +255,6 @@ pub struct Shared {
     pub ui: Mutex<UiState>,
     pub cmd: UnboundedSender<Command>,
     pub egui: OnceLock<eframe::egui::Context>,
-    /// Incremented whenever a new dialogue line supersedes the previous one.
-    pub dialogue_seq: AtomicU64,
     pub interface_gen: AtomicU64,
     pub reset_watcher: AtomicBool,
     /// Screen rectangles (physical px, x/y/w/h) the overlay painted in its last
@@ -318,12 +278,6 @@ impl Shared {
         let r = f(&mut self.ui.lock().unwrap());
         self.repaint();
         r
-    }
-    pub fn next_dialogue_seq(&self) -> u64 {
-        self.dialogue_seq.fetch_add(1, Ordering::SeqCst) + 1
-    }
-    pub fn dialogue_is_current(&self, seq: u64) -> bool {
-        self.dialogue_seq.load(Ordering::SeqCst) == seq
     }
     pub fn save_config(&self) {
         let cfg = self.cfg();

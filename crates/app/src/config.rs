@@ -110,49 +110,17 @@ impl Default for ModelPreset {
     }
 }
 
+/// How translations look and read. Kept under `[dialogue]` so older configs
+/// load (the subtitle mode it once belonged to is gone).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Dialogue {
-    pub enabled: bool,
-    /// "auto": read the whole screen and translate anything that looks like speech;
-    /// "region": watch only the selected subtitle region.
-    pub mode: String,
-    /// How often the whole screen is read in «auto» mode.
-    pub auto_interval_ms: u64,
-    /// Subtitle region as fractions of the primary screen: [x, y, w, h].
-    pub region: [f32; 4],
-    pub interval_ms: u64,
-    /// "light" (white subtitles) or "dark".
-    pub text_color: String,
-    /// Luminance threshold for text pixels (0–255).
-    pub ink_threshold: u8,
-    pub upscale: u32,
-    /// "contrast" or "none"
-    pub preprocess: String,
     pub context_lines: usize,
     pub show_original: bool,
-    /// "below", "above" or "over" the source subtitles, or "box": in the user's
-    /// own window (`box_rect`), moved and resized on screen.
-    pub position: String,
-    /// The user's translation window as fractions of the primary screen: [x, y, w, h].
-    pub box_rect: [f32; 4],
-    pub font_size: f32,
-    /// Look of the translation over the game: font (any installed Windows
-    /// font), text and speaker-name colours, dark outline around letters.
+    /// Font of the translation (one of the bundled comic fonts or any Windows font).
     pub overlay_font: String,
-    pub overlay_color: [u8; 3],
-    pub overlay_name_color: [u8; 3],
-    pub overlay_outline: bool,
-    pub backdrop_opacity: f32,
-    pub stable_frames: u32,
-    pub clear_frames: u32,
-    pub change_threshold: f32,
     /// Russian free-text style wish passed to instruct models.
     pub style_hint: String,
-    /// Translate speaker names in "Имя：реплика" separately (cached).
-    pub split_speaker: bool,
-    /// The user has picked the subtitle region at least once.
-    pub region_set: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,10 +155,8 @@ pub struct Ocr {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Hotkeys {
-    pub toggle_dialogue: String,
     pub screen_translate: String,
     pub show_original: String,
-    pub select_region: String,
     pub panel: String,
     /// Save the screen as a test case for the developer.
     pub save_case: String,
@@ -337,33 +303,7 @@ pub fn default_models() -> Vec<ModelPreset> {
 
 impl Default for Dialogue {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            mode: "auto".into(),
-            auto_interval_ms: 500,
-            region: [0.18, 0.80, 0.64, 0.12],
-            interval_ms: 150,
-            text_color: "light".into(),
-            ink_threshold: 200,
-            upscale: 2,
-            preprocess: "none".into(),
-            context_lines: 3,
-            show_original: false,
-            position: "below".into(),
-            box_rect: [0.2, 0.74, 0.6, 0.13],
-            font_size: 26.0,
-            overlay_font: "Balsamiq Sans".into(),
-            overlay_color: [250, 246, 235],
-            overlay_name_color: [240, 200, 120],
-            overlay_outline: true,
-            backdrop_opacity: 0.72,
-            stable_frames: 2,
-            clear_frames: 4,
-            change_threshold: 0.03,
-            style_hint: String::new(),
-            split_speaker: true,
-            region_set: false,
-        }
+        Self { context_lines: 3, show_original: false, overlay_font: "Balsamiq Sans".into(), style_hint: String::new() }
     }
 }
 
@@ -382,10 +322,8 @@ impl Default for Ocr {
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
-            toggle_dialogue: String::new(),
             screen_translate: "F8".into(),
             show_original: "F9".into(),
-            select_region: String::new(),
             panel: "F10".into(),
             save_case: "Ctrl+F9".into(),
             freeze: "Ctrl+F8".into(),
@@ -440,12 +378,6 @@ impl Config {
             }
             cfg.general.comic_font_set = true;
             let _ = cfg.save(paths);
-        }
-        // Region mode cannot work with a near-full-screen region (the 3D scene never
-        // settles); such configs come from before the auto mode existed.
-        let r = cfg.dialogue.region;
-        if cfg.dialogue.mode == "region" && r[2] * r[3] >= 0.5 {
-            cfg.dialogue.mode = "auto".into();
         }
         Ok(cfg)
     }
@@ -513,11 +445,5 @@ impl Config {
         } else {
             self.active_model().id.clone()
         }
-    }
-
-    pub fn active_model_mut(&mut self) -> &mut ModelPreset {
-        let id = self.llm.active_model.clone();
-        let idx = self.models.iter().position(|m| m.id == id).unwrap_or(0);
-        &mut self.models[idx]
     }
 }

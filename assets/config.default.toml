@@ -14,7 +14,7 @@ game_title = ""
 window_match = ""
 pause_when_unfocused = true
 # Показывать перевод и панель на скриншотах (для отладки). При включении перевод
-# теоретически может попасть в собственный OCR, если наложен на область субтитров.
+# теоретически может попасть в собственный OCR, если окажется поверх распознаваемой страницы.
 visible_in_screenshots = false
 
 [llm]
@@ -85,38 +85,15 @@ no_think = true
 template = ""
 size_gb = 5.0
 
-# Режим субтитров из Wuxia Local (постоянное чтение экрана). Для манги выключен:
-# страница переводится клавишей F8.
+# Вид и стиль перевода.
 [dialogue]
-enabled = false
-# "auto" — читать весь экран и переводить всё, что похоже на речь (субтитры, реплики, подсказки);
-# "region" — только выбранная область (Ctrl+F7 переключает сюда).
-mode = "auto"
-# Как часто читать весь экран в режиме auto, мс.
-auto_interval_ms = 500
-# Область субтитров в долях экрана: [x, y, ширина, высота]. Удобнее выбрать мышью (Ctrl+F7).
-region = [0.18, 0.80, 0.64, 0.12]
-interval_ms = 150
-text_color = "light"
-ink_threshold = 200
-upscale = 2
-preprocess = "none"
+# Сколько прошлых реплик показывать нейросети при переводе по одной.
 context_lines = 3
 show_original = false
-position = "below"
-font_size = 26.0
-# Вид перевода: шрифт (Balsamiq Sans и Pangolin — комиксные, идут с программой; или любой шрифт Windows), цвета текста и имени (R, G, B), обводка букв
+# Шрифт перевода: Balsamiq Sans и Pangolin — комиксные, идут с программой; или любой шрифт Windows.
 overlay_font = "Balsamiq Sans"
-overlay_color = [250, 246, 235]
-overlay_name_color = [240, 200, 120]
-overlay_outline = true
-backdrop_opacity = 0.72
-stable_frames = 2
-clear_frames = 4
-change_threshold = 0.03
+# Пожелание к стилю (для Gemma и других универсальных моделей), например «проще, как в сёнэне».
 style_hint = ""
-split_speaker = true
-region_set = false
 
 # Перевод страницы (F8): строки собираются в пузыри, перевод пишется внутри пузыря.
 [interface]
@@ -141,10 +118,8 @@ language = "zh-Hans-CN"
 [hotkeys]
 # Примеры: "F8", "Ctrl+F8", "Alt+Shift+T". Назначенная клавиша не передаётся другим программам.
 # Пусто — клавиша не назначена.
-toggle_dialogue = ""
 screen_translate = "F8"
 show_original = "F9"
-select_region = ""
 panel = "F10"
 # Сохранить экран как случай для проверки (папка cases в данных программы)
 save_case = "Ctrl+F9"
