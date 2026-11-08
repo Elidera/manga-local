@@ -82,7 +82,10 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
             // More than a quarter of the ring is not the paper colour: artwork.
             let busy = spread > 25.0;
             // Clean the original: the letters filled from their neighbours.
-            let patch = wuxia_core::clean::clean_text(frame, &rect, line_h, bg);
+            // A speech bubble: flat and light paper (a flat grey or dark background is
+            // the artwork, where letters may touch lines of the picture).
+            let paper = !busy && wuxia_core::image::luma(bg[2], bg[1], bg[0]) > 200;
+            let patch = wuxia_core::clean::clean_text(frame, &rect, line_h, bg, paper);
             let fg = match &patch {
                 Some(p) if busy => contrast_text(p.mean_rgb()),
                 _ => contrast_text(bg),
@@ -338,6 +341,7 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
 /// Stops when that view is gone (the page moved or F8 was pressed); finished
 /// translations stay in the cache, so the page comes back at once.
 async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &crate::config::ModelPreset, game: &str, gen: u64, unique: Vec<String>) {
+    let alive = || shared.interface_gen.load(Ordering::SeqCst) == gen;
     let set_result = |src: &str, dst: String| {
         shared.ui(|u| {
             if let Some(v) = u.interface.as_mut().filter(|v| v.generation == gen) {
@@ -348,13 +352,26 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
             }
         })
     };
-    // The whole page in one call when it fits (up to 24 bubbles / ~900 chars):
-    // the model then sees the conversation and keeps names the same.
+    translate_texts(shared, tr, preset, game, unique, alive, set_result).await;
+}
+
+/// Translate the bubbles of one page: the whole page in one call when it fits
+/// (up to 24 bubbles / ~900 chars) — the model then sees the conversation and
+/// keeps names the same; what a batch could not give back, one by one.
+/// `alive() == false` stops early; `done` gets every result (or the original
+/// text when translation failed). Also used for chapter files.
+pub async fn translate_texts(
+    shared: &Arc<Shared>,
+    tr: &Arc<Translator>,
+    preset: &crate::config::ModelPreset,
+    game: &str,
+    unique: Vec<String>,
+    alive: impl Fn() -> bool,
+    mut done: impl FnMut(&str, String),
+) {
     let mut chunks: Vec<Vec<String>> = Vec::new();
     for src in unique {
-        let fits = chunks.last().map_or(false, |c: &Vec<String>| {
-            c.len() < 24 && c.iter().map(|s| s.chars().count()).sum::<usize>() + src.chars().count() < 900
-        });
+        let fits = chunks.last().is_some_and(|c: &Vec<String>| c.len() < 24 && c.iter().map(|s| s.chars().count()).sum::<usize>() + src.chars().count() < 900);
         if fits {
             chunks.last_mut().unwrap().push(src);
         } else {
@@ -362,7 +379,7 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
         }
     }
     for chunk in chunks {
-        if shared.interface_gen.load(Ordering::SeqCst) != gen {
+        if !alive() {
             return; // hidden or replaced
         }
         let mut rest: Vec<String> = chunk.clone();
@@ -374,7 +391,7 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
                     rest.clear();
                     for (src, dst) in chunk.iter().zip(out) {
                         match dst {
-                            Some(d) => set_result(src, d),
+                            Some(d) => done(src, d),
                             None => rest.push(src.clone()),
                         }
                     }
@@ -386,7 +403,7 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
             }
         }
         for src in rest {
-            if shared.interface_gen.load(Ordering::SeqCst) != gen {
+            if !alive() {
                 return;
             }
             let res = tr.translate(preset, game, "", &src, TextKind::Dialogue, Opts { use_cache: true, use_history: false }, |_| {}).await;
@@ -400,7 +417,7 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
                     src.clone()
                 }
             };
-            set_result(&src, dst);
+            done(&src, dst);
         }
     }
 }

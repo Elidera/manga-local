@@ -21,6 +21,8 @@ mod extras;
 #[cfg(windows)]
 mod filepick;
 #[cfg(windows)]
+mod files;
+#[cfg(windows)]
 mod hotkeys;
 #[cfg(windows)]
 mod interface;
@@ -76,7 +78,7 @@ mod app {
     use crate::paths::Paths;
     use crate::state::{Command, Shared, UiState};
     use crate::translate::Translator;
-    use crate::{bench, capture, dialogue, hotkeys, interface, ui, win};
+    use crate::{bench, capture, dialogue, files, hotkeys, interface, ui, win};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, OnceLock, RwLock};
     use tokio::sync::mpsc;
@@ -465,6 +467,14 @@ mod app {
                         u.notice(format!("Словари перечитаны: терминов {n}, исправлений {f}"));
                     });
                 }
+                Command::TranslateFiles(p) => match &ocr {
+                    Some(o) => {
+                        let (sh, tr, o) = (shared.clone(), tr.clone(), o.clone());
+                        tokio::spawn(async move { files::translate_chapter(sh, tr, o, p).await });
+                    }
+                    None => shared.ui(|u| u.notice("OCR не готов — перевод файлов недоступен")),
+                },
+                Command::StopFiles => files::stop(),
                 Command::RunBench => {
                     let sh = shared.clone();
                     tokio::spawn(async move {

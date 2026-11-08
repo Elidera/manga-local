@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p wuxia-core
+      - run: cargo test -p wuxia-core -p manga-pages
 
   windows:
     runs-on: windows-latest
@@ -41,7 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Test core
-        run: cargo test -p wuxia-core
+        run: cargo test -p wuxia-core -p manga-pages
 
       - name: Clippy
         run: cargo clippy -p manga-local --release -- -D clippy::correctness

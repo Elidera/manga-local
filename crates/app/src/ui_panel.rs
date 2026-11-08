@@ -509,6 +509,26 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
             shared.send(Command::BadTranslation);
         }
     });
+    // Chapter files: a folder, ZIP or CBZ — the translation is lettered into the pictures.
+    let files_progress = shared.ui.lock().unwrap().files_progress.clone();
+    let full = w * 2.0 + ui.spacing().item_spacing.x;
+    match &files_progress {
+        Some(p) => {
+            if big_action(ui, "Перевод главы идёт… (нажмите, чтобы остановить)", p, "", true, full) {
+                shared.send(Command::StopFiles);
+            }
+        }
+        None => {
+            if big_action(ui, "Перевести файлы главы", "Папка с картинками, ZIP или CBZ: текст сотрётся, перевод впишется в картинки, рядом появится переведённая глава", "", false, full) {
+                let sh = shared.clone();
+                std::thread::spawn(move || {
+                    if let Some(p) = crate::filepick::open_chapter() {
+                        sh.send(Command::TranslateFiles(p));
+                    }
+                });
+            }
+        }
+    }
     ui.add_space(8.0);
 
     // Model.

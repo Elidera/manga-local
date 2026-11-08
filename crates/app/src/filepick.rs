@@ -39,6 +39,18 @@ fn dialog(save: bool, filter: &str, title: &str, default_name: &str, default_ext
     }
 }
 
+/// Ask for a chapter: a ZIP / CBZ archive, or any picture of a folder (the
+/// whole folder is translated).
+pub fn open_chapter() -> Option<PathBuf> {
+    dialog(
+        false,
+        "Глава: архив или любая картинка из папки (*.zip;*.cbz;*.png;*.jpg;*.jpeg;*.webp)\0*.zip;*.cbz;*.png;*.jpg;*.jpeg;*.webp\0",
+        "Какую главу перевести? Архив ZIP/CBZ или любая картинка из папки главы",
+        "",
+        "",
+    )
+}
+
 /// Ask for a .gguf model file.
 pub fn pick_gguf() -> Option<PathBuf> {
     dialog(false, "Модель нейросети (*.gguf)\0*.gguf\0", "Выберите файл модели (.gguf)", "", "")

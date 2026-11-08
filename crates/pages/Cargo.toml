@@ -1,0 +1,13 @@
+[package]
+name = "manga-pages"
+description = "Translating chapter files: reading folders / ZIP / CBZ, slicing tall webtoon strips for OCR, cleaning the original text and lettering the translation into the picture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+wuxia-core = { path = "../core" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "gif"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+ab_glyph = "0.2"

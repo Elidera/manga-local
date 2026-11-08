@@ -58,12 +58,12 @@ fn clip(frame: &Frame, r: &Rect, pad: f32) -> Option<(i32, i32, i32, i32)> {
 
 /// Remove the text of one block. `rect` is the text block, `line_h` its line
 /// height, `around` the colour around it (the bubble paper, or the median of
-/// the artwork). The letters are the pixels that differ from `around`, widened
+/// the artwork), `bubble` — it is a flat speech bubble. The letters are the pixels that differ from `around`, widened
 /// by a pixel or two (anti-aliased edges, outlines of the letters); only they
 /// are replaced, each from its neighbours (push–pull). In a bubble that gives
 /// clean paper; over artwork tones, gradients and lines between the letters
 /// stay and continue under them.
-pub fn clean_text(frame: &Frame, rect: &Rect, line_h: f32, around: [u8; 3]) -> Option<Patch> {
+pub fn clean_text(frame: &Frame, rect: &Rect, line_h: f32, around: [u8; 3], bubble: bool) -> Option<Patch> {
     let pad = (line_h * 0.2).clamp(2.0, 8.0);
     let (x0, y0, x1, y1) = clip(frame, rect, pad)?;
     let (w, h) = (x1 - x0, y1 - y0);
@@ -76,6 +76,10 @@ pub fn clean_text(frame: &Frame, rect: &Rect, line_h: f32, around: [u8; 3]) -> O
             ink[(y * w + x) as usize] = d > 45;
         }
     }
+    // In a bubble, ink that runs out of the block is not a letter but the
+    // outline of the bubble passing a corner: it stays. (Over artwork the
+    // letters often touch lines of the picture, so there everything goes.)
+    let ink = if bubble { drop_touching_border(&ink, w, h) } else { ink };
     let grow = ((line_h / 11.0).round() as i32).clamp(1, 5);
     let hole = dilate(&ink, w, h, grow);
     // Known pixels: everything in the block that is not a letter, plus a ring around it.
@@ -110,6 +114,32 @@ pub fn clean_text(frame: &Frame, rect: &Rect, line_h: f32, around: [u8; 3]) -> O
         }
     }
     Some(Patch { x: x0, y: y0, w, h, bgra })
+}
+
+/// Remove the connected pieces of `m` (4-neighbours) that touch the border.
+fn drop_touching_border(m: &[bool], w: i32, h: i32) -> Vec<bool> {
+    let mut out = m.to_vec();
+    let mut stack: Vec<(i32, i32)> = Vec::new();
+    for x in 0..w {
+        stack.push((x, 0));
+        stack.push((x, h - 1));
+    }
+    for y in 0..h {
+        stack.push((0, y));
+        stack.push((w - 1, y));
+    }
+    while let Some((x, y)) = stack.pop() {
+        if x < 0 || y < 0 || x >= w || y >= h {
+            continue;
+        }
+        let i = (y * w + x) as usize;
+        if !out[i] {
+            continue;
+        }
+        out[i] = false;
+        stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]);
+    }
+    out
 }
 
 fn dilate(m: &[bool], w: i32, h: i32, r: i32) -> Vec<bool> {
@@ -214,7 +244,7 @@ mod tests {
         // White paper, a black stroke in the middle, a black bubble outline far away.
         let f = frame(120, 60, |x, y| if (40..80).contains(&x) && (28..32).contains(&y) || x == 2 { [0, 0, 0] } else { [255, 255, 255] });
         let r = Rect { x: 38.0, y: 24.0, w: 44.0, h: 12.0 };
-        let p = clean_text(&f, &r, 12.0, [255, 255, 255]).unwrap();
+        let p = clean_text(&f, &r, 12.0, [255, 255, 255], true).unwrap();
         assert_eq!(at(&p, 60, 30), [255, 255, 255, 255], "the stroke is covered with paper");
         assert_eq!(at(&p, 60, 27)[3], 255, "and a pixel around it");
         assert_eq!(at(&p, 45, 25)[3], 0, "plain paper stays the page itself");
@@ -230,7 +260,7 @@ mod tests {
         };
         let f = frame(200, 80, |x, y| if (60..140).contains(&x) && (30..50).contains(&y) && x % 3 == 0 { [255, 255, 255] } else { grad(x) });
         let r = Rect { x: 60.0, y: 30.0, w: 80.0, h: 20.0 };
-        let p = clean_text(&f, &r, 20.0, grad(100)).unwrap();
+        let p = clean_text(&f, &r, 20.0, grad(100), false).unwrap();
         for y in 0..p.h {
             for x in 0..p.w {
                 let i = ((y * p.w + x) * 4) as usize;
@@ -247,9 +277,35 @@ mod tests {
     }
 
     #[test]
+    fn bubble_outline_near_the_text_stays() {
+        // A round bubble whose outline cuts through the corner of the padded text block.
+        let f = frame(200, 100, |x, y| {
+            let (dx, dy) = ((x as f32 - 100.0) / 80.0, (y as f32 - 50.0) / 34.0);
+            let r = dx * dx + dy * dy;
+            if (0.93..1.0).contains(&r) || (60..140).contains(&x) && (40..60).contains(&y) && x % 4 == 0 {
+                [0, 0, 0]
+            } else {
+                [255, 255, 255]
+            }
+        });
+        let p = clean_text(&f, &Rect { x: 58.0, y: 38.0, w: 84.0, h: 24.0 }, 12.0, [255, 255, 255], true).unwrap();
+        // The letters are gone.
+        assert_eq!(at(&p, 80, 50)[3], 255);
+        // No pixel of the outline is covered.
+        for y in p.y..p.y + p.h {
+            for x in p.x..p.x + p.w {
+                let (dx, dy) = ((x as f32 - 100.0) / 80.0, (y as f32 - 50.0) / 34.0);
+                if (0.93..1.0).contains(&(dx * dx + dy * dy)) {
+                    assert_eq!(at(&p, x, y)[3], 0, "outline at ({x}, {y}) covered");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn flat_background_stays_flat() {
         let f = frame(100, 50, |x, y| if (40..60).contains(&x) && (15..35).contains(&y) { [0, 0, 0] } else { [90, 120, 200] });
-        let p = clean_text(&f, &Rect { x: 40.0, y: 15.0, w: 20.0, h: 20.0 }, 20.0, [90, 120, 200]).unwrap();
+        let p = clean_text(&f, &Rect { x: 40.0, y: 15.0, w: 20.0, h: 20.0 }, 20.0, [90, 120, 200], true).unwrap();
         assert_eq!(p.mean_rgb(), [90, 120, 200]);
     }
 }
