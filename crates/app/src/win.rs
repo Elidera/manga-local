@@ -5,7 +5,8 @@ use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Threading::{
-    CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE,
+    CreateEventW, CreateMutexW, GetCurrentProcess, OpenEventW, SetEvent, TerminateProcess, WaitForSingleObject,
+    EVENT_MODIFY_STATE, INFINITE,
 };
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
@@ -21,6 +22,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_RUNNING_D3D_FULL_SCREEN};
 
 /// Local date and time: ("2026-11-08", "13:45:02").
+/// Leave the process right away with `code`. A normal exit lets Windows unload
+/// the OCR (WinRT) libraries while their worker thread still holds objects,
+/// which sometimes crashes (0xC0000005) or hangs on the way out.
+pub fn hard_exit(code: i32) -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    unsafe {
+        let _ = TerminateProcess(GetCurrentProcess(), code as u32);
+    }
+    std::process::exit(code)
+}
+
 pub fn local_date_time() -> (String, String) {
     let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     (format!("{:04}-{:02}-{:02}", t.wYear, t.wMonth, t.wDay), format!("{:02}:{:02}:{:02}", t.wHour, t.wMinute, t.wSecond))

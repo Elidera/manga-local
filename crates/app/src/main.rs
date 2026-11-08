@@ -63,6 +63,8 @@ fn main() {
     if let Err(e) = app::run() {
         app::fatal(&format!("{e:#}"));
     }
+    // Everything is saved by now; skip the library unloading that can crash.
+    win::hard_exit(0);
 }
 
 #[cfg(windows)]
@@ -116,7 +118,7 @@ mod app {
         // Screenshot tests (CI and the developer): no window, no second-copy check.
         let args: Vec<String> = std::env::args().collect();
         if args.get(1).map(String::as_str) == Some("--selftest") {
-            std::process::exit(crate::selftest::run_cli(&args));
+            win::hard_exit(crate::selftest::run_cli(&args));
         }
         // Only one copy: a second launch just brings up the panel of the first one.
         if !win::claim_single_instance() {
@@ -442,7 +444,7 @@ mod app {
                     // (llama-server dies with us through the job object).
                     std::thread::spawn(|| {
                         std::thread::sleep(std::time::Duration::from_secs(5));
-                        std::process::exit(0);
+                        win::hard_exit(0);
                     });
                 }
                 Command::PanelClosedToTray => {
