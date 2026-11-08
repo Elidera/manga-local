@@ -27,6 +27,8 @@ pub struct Translator {
     fuzzy: Mutex<FuzzyMemory>,
     /// All OCR spellings of a speaker name → one.
     names: Mutex<NameBook>,
+    /// The title whose dictionary is loaded (see `ensure_title`).
+    title: Mutex<String>,
     /// When the last dialogue line was translated: after a long silence the
     /// scene has changed and old lines are no longer useful context.
     last_dialogue: Mutex<Option<Instant>>,
@@ -68,9 +70,10 @@ fn append(path: &std::path::Path, line: &str) {
     }
 }
 
-/// Bundled and user glossaries. A file named `<profile>_*.tsv` (e.g. `wuwa_terms.tsv`)
-/// belongs to that game and is loaded only when the game is selected.
-pub fn load_glossary(paths: &Paths, profile: &str) -> Glossary {
+/// Bundled and user glossaries, then the dictionary of the title being read
+/// (it overrides the others). A file named `<profile>_*.tsv` belongs to that
+/// profile and is loaded only when the profile is selected.
+pub fn load_glossary(paths: &Paths, profile: &str, title: &str) -> Glossary {
     let mut g = Glossary::new();
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     for dir in [paths.bundled_glossary_dir(), paths.user_glossary_dir()] {
@@ -88,6 +91,9 @@ pub fn load_glossary(paths: &Paths, profile: &str) -> Glossary {
             .unwrap_or_default();
         v.sort(); // deterministic; user dir comes last and overrides
         files.extend(v);
+    }
+    if let Some(t) = paths.title_glossary(title).filter(|p| p.exists()) {
+        files.push(t);
     }
     for f in files {
         match std::fs::read_to_string(&f) {
@@ -129,9 +135,10 @@ impl Translator {
             let _ = std::fs::write(
                 paths.user_glossary(),
                 "# Ваш глоссарий: оригинал<TAB>русский<TAB>заметка. Перекрывает встроенный.\n\
-                 # Оригинал может быть китайским или английским (английский — без учёта регистра).\n\
+                 # Оригинал — на корейском, японском, китайском или английском (английский — без учёта регистра).\n\
+                 # Имена одного тайтла удобнее держать в «Словаре тайтла» (Словари).\n\
                  # «пол: ж» или «пол: м» в заметке к имени — модель узнает пол говорящего.\n\
-                 # Примеры:\n# 沈七\tШэнь Ци\tимя; пол: м\n# Rover\tСкиталец\tгерой\n# Langsheng\tЛаншэн\tпол: м\n",
+                 # Примеры:\n# 선배\tсонбэ\n# お兄ちゃん\tбратик\n# Hunter\tохотник\n",
             );
         }
         if !paths.fixes().exists() {
@@ -148,7 +155,7 @@ impl Translator {
             );
         }
         let fixes = load_fixes(&paths);
-        let glossary = load_glossary(&paths, profile);
+        let glossary = load_glossary(&paths, profile, "");
         tracing::info!("кэш: {} · исправления: {} · глоссарий: {}", cache.len(), corrections.len(), glossary.len());
         Self {
             paths,
@@ -159,6 +166,7 @@ impl Translator {
             corrections: Mutex::new(corrections),
             history: Mutex::new(History::new(context_lines)),
             fuzzy: Mutex::new(FuzzyMemory::new(400, 0.9)),
+            title: Mutex::new(String::new()),
             names: Mutex::new(NameBook::new()),
             last_dialogue: Mutex::new(None),
             gate: tokio::sync::Mutex::new(()),
@@ -167,12 +175,50 @@ impl Translator {
 
     /// Re-read glossaries and fixes. Returns (terms, fix rules).
     pub fn reload_dictionaries(&self, profile: &str) -> (usize, usize) {
-        let g = load_glossary(&self.paths, profile);
+        let title = self.title.lock().unwrap().clone();
+        let g = load_glossary(&self.paths, profile, &title);
         let f = load_fixes(&self.paths);
         let n = (g.len(), f.len());
         *self.glossary.lock().unwrap() = g;
         *self.fixes.lock().unwrap() = f;
         n
+    }
+
+    /// Load the dictionary of `title` if another title was loaded so far
+    /// (called before each page: the title can be typed in at any moment).
+    pub fn ensure_title(&self, profile: &str, title: &str) {
+        let title = title.trim();
+        if *self.title.lock().unwrap() == title {
+            return;
+        }
+        *self.title.lock().unwrap() = title.to_string();
+        let (n, _) = self.reload_dictionaries(profile);
+        tracing::info!("тайтл «{title}»: словарей загружено, терминов {n}");
+    }
+
+    /// Open (creating it with a short help) the dictionary file of `title`.
+    pub fn title_glossary_file(&self, title: &str) -> Option<std::path::PathBuf> {
+        let path = self.paths.title_glossary(title)?;
+        if !path.exists() {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(
+                &path,
+                format!(
+                    "# Словарь тайтла «{}»: оригинал<TAB>русский<TAB>заметка.\n\
+                     # Имена героев и особые слова этого тайтла — так они переводятся одинаково во всех главах.\n\
+                     # Работает, когда в настройках указано это название тайтла. Перекрывает остальные словари.\n\
+                     # «пол: ж» или «пол: м» в заметке к имени — переводчик узнает пол героя.\n\
+                     # Примеры (уберите # в начале строки):\n\
+                     # 성진우\tСон Джину\tгерой; пол: м\n\
+                     # Jin-woo\tДжину\tпол: м\n\
+                     # 先輩\tсэмпай\n",
+                    title.trim()
+                ),
+            );
+        }
+        Some(path)
     }
 
     pub fn dict_counts(&self) -> (usize, usize) {

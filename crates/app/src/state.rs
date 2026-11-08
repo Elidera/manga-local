@@ -68,6 +68,8 @@ pub enum Command {
     SaveCorrection { src: String, dst: String },
     TestTranslate(String),
     ReloadGlossary,
+    /// Open the dictionary of the current title (created on first use).
+    OpenTitleDict,
     /// Game profile or text language changed: reload dictionaries, check OCR.
     GameChanged,
     /// Exit the program (tray menu or the panel's «Выход»).

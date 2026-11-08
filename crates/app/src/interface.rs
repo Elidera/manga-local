@@ -214,6 +214,7 @@ struct Page {
 async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, session: u64, follow: bool, first: bool) -> Option<Page> {
     let gen = shared.interface_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let cfg = shared.cfg();
+    tr.ensure_title(&cfg.general.profile, &cfg.general.game_title);
     // The reader's own picture when it is in front (no taskbar or other windows).
     let full: PxRect = capture::game_area(&cfg);
     // Wait until two pictures 250 ms apart match (at most ~1.5 s): a page that

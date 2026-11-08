@@ -39,7 +39,7 @@ pub async fn run(shared: Arc<Shared>) -> Result<PathBuf> {
     let lines: Vec<String> =
         text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string).collect();
     let cfg = shared.cfg();
-    let glossary = crate::translate::load_glossary(&shared.paths, &shared.cfg().general.profile);
+    let glossary = crate::translate::load_glossary(&shared.paths, &shared.cfg().general.profile, &shared.cfg().general.game_title);
     let progress = |s: String| shared.ui(|u| u.bench_progress = Some(s));
 
     let mut results: Vec<(String, Vec<Row>, String)> = Vec::new();

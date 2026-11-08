@@ -635,7 +635,7 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
                 ui.add(egui::TextEdit::singleline(&mut g.window_match).desired_width(220.0)).changed()
             });
         }
-        dirty |= setting_row(ui, "Название тайтла", "Необязательно: подсказка нейросети (только для моделей Qwen)", |ui| {
+        dirty |= setting_row(ui, "Название тайтла", "Необязательно: включает словарь тайтла (Словари) и подсказывает нейросети", |ui| {
             ui.add(egui::TextEdit::singleline(&mut g.game_title).hint_text("например: Поднятие уровня в одиночку").desired_width(220.0)).changed()
         });
     });
@@ -740,6 +740,17 @@ fn page_dictionaries(ui: &mut Ui, shared: &Arc<Shared>, edits: &mut HashMap<Stri
                     }
                 });
             });
+        }
+    });
+    let title = cfg_title(shared);
+    card(ui, "Словарь тайтла", |ui| {
+        if title.is_empty() {
+            hint(ui, "Имена героев одного тайтла — чтобы во всех главах они звучали одинаково. Сначала впишите название тайтла: Настройки → «Где читаете».");
+        } else {
+            hint(ui, &format!("«{title}»: имена героев и особые слова этого тайтла. Работает, пока в настройках указан этот тайтл."));
+            if ui.button("Открыть").clicked() {
+                shared.send(Command::OpenTitleDict);
+            }
         }
     });
     ui.horizontal(|ui| {
@@ -913,4 +924,8 @@ fn page_help(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
         hint(ui, &format!("Данные: {}", shared.paths.data.display()));
     });
     false
+}
+
+fn cfg_title(shared: &Shared) -> String {
+    shared.cfg().general.game_title.trim().to_string()
 }

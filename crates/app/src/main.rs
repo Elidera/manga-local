@@ -511,6 +511,13 @@ mod app {
                 }
                 Command::SaveConfig => shared.save_config(),
                 Command::Open(p) => open_path(&p),
+                Command::OpenTitleDict => {
+                    let title = shared.cfg().general.game_title;
+                    match tr.title_glossary_file(&title) {
+                        Some(p) => open_path(&p),
+                        None => shared.ui(|u| u.notice("Сначала впишите название тайтла: Настройки → «Где читаете»")),
+                    }
+                }
                 Command::OpenUrl(u) => {
                     if u.starts_with("https://") {
                         let _ = std::process::Command::new("explorer").arg(&u).spawn();

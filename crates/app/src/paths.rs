@@ -59,6 +59,21 @@ impl Paths {
     pub fn user_glossary(&self) -> PathBuf {
         self.user_glossary_dir().join("user.tsv")
     }
+    /// The dictionary of one title (names of its characters, its terms):
+    /// `glossary\titles\<title>.tsv`. None when no title is set.
+    pub fn title_glossary(&self, title: &str) -> Option<PathBuf> {
+        let safe: String = title
+            .trim()
+            .chars()
+            .map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c })
+            .take(80)
+            .collect();
+        let safe = safe.trim_end_matches(['.', ' ']).to_string();
+        if safe.is_empty() {
+            return None;
+        }
+        Some(self.user_glossary_dir().join("titles").join(format!("{safe}.tsv")))
+    }
     pub fn fixes(&self) -> PathBuf {
         self.data.join("fixes.tsv")
     }
