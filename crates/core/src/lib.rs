@@ -1,0 +1,23 @@
+//! Wuxia Local core.
+//!
+//! Everything here is pure logic with no OS or network access, so it can be
+//! unit-tested anywhere. The Windows application (`wuxia-app`) wires these
+//! pieces to screen capture, OCR, llama-server and the overlay.
+
+pub mod bundle;
+pub mod cache;
+pub mod detect;
+pub mod fixes;
+pub mod glossary;
+pub mod history;
+pub mod image;
+pub mod lang;
+pub mod layout;
+pub mod memory;
+pub mod prompt;
+pub mod raster;
+pub mod selftest;
+pub mod similarity;
+pub mod text;
+pub mod tsv;
+pub mod zone;

@@ -17,7 +17,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "Cargo.toml"
+      - "crates/core/**"
       - "crates/bench/**"
       - "assets/glossary/**"
       - "assets/bench/**"

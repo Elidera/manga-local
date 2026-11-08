@@ -4,7 +4,7 @@
 Всё работает на вашем компьютере и бесплатно: распознавание текста — встроенное в Windows,
 перевод — нейросеть Hy-MT2 через llama.cpp. Интернет нужен только один раз, чтобы скачать модель.
 
-Программа сделана на основе [Wuxia Local](https://github.com/Elidera/wuxia-local) и использует его ядро.
+Программа сделана на основе [Wuxia Local](https://github.com/Elidera/wuxia-local) (коммит d2ee424), но дальше развивается отдельно: изменения здесь не затрагивают Wuxia Local.
 
 ## Состояние
 
@@ -37,7 +37,7 @@ Manga Local и Wuxia Local можно ставить рядом: у них ра�
 ## Устройство
 
 ```
-wuxia-core    ядро из репозитория Wuxia Local (git-зависимость в Cargo.toml):
+crates/core   ядро (скопировано из Wuxia Local, тесты на любой ОС):
               очистка текста, глоссарий, промпты, кэш, группировка строк, рисование надписей
 crates/app    manga-local.exe (Windows): захват экрана, Windows OCR, llama-server, оверлей, трей, панель
 crates/bench  проверка качества перевода на наборе строк (.github/workflows/quality.yml)
@@ -46,9 +46,8 @@ crates/bench  проверка качества перевода на набор
 ## Сборка (для разработчиков)
 
 ```
+cargo test -p wuxia-core              # на любой ОС
 cargo build -p manga-local --release  # Windows 10/11 x64, MSVC
 ```
-
-Чтобы править ядро вместе с приложением, положите рядом клон wuxia-local и раскомментируйте `[patch]` в `Cargo.toml`.
 
 Установщик и portable-архив собирает GitHub Actions (`.github/workflows/release.yml`) на каждый push в main. Хранятся 5 последних сборок. Тег `v*` публикует релиз.
