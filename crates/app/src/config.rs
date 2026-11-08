@@ -301,6 +301,19 @@ pub fn default_models() -> Vec<ModelPreset> {
             ..Default::default()
         },
         ModelPreset {
+            id: "gemma4-e4b".into(),
+            name: "Gemma 4 E4B Q4_K_M — самый живой перевод (видеокарта от 6 ГБ)".into(),
+            prompt: "instruct".into(),
+            hf: "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M".into(),
+            temperature: 0.3,
+            top_p: 0.8,
+            top_k: 20,
+            repeat_penalty: 1.05,
+            no_think: true,
+            size_gb: 5.0,
+            ..Default::default()
+        },
+        ModelPreset {
             id: "qwen3.5-2b".into(),
             name: "Qwen3.5 2B Q4_K_M — альтернатива".into(),
             prompt: "instruct".into(),
@@ -395,6 +408,13 @@ impl Config {
         let mut cfg: Config = toml::from_str(&text).map_err(|e| anyhow::anyhow!("Ошибка в {}: {e}", p.display()))?;
         if cfg.models.is_empty() {
             cfg.models = default_models();
+        } else {
+            // Presets added in newer versions appear in older configs too.
+            for m in default_models() {
+                if !cfg.models.iter().any(|x| x.id == m.id) {
+                    cfg.models.push(m);
+                }
+            }
         }
         cfg.apply_profile();
         // Configs from before the bundled comic font: switch the old default
