@@ -96,7 +96,7 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
         })
         .filter(|it| !it.src.is_empty())
         .collect();
-    let order = layout::reading_order(&items.iter().map(|it| it.rect).collect::<Vec<_>>(), lang == Lang::Ja);
+    let order = page_order(&items, frame, lang == Lang::Ja);
     order.into_iter().map(|i| items[i].clone()).collect()
 }
 
@@ -106,6 +106,15 @@ static SESSIONS: AtomicU64 = AtomicU64::new(0);
 
 fn reading(session: u64) -> bool {
     READING.load(Ordering::SeqCst) == session
+}
+
+/// Reading order of a page's bubbles: panel by panel (found by the gutters
+/// between them; manga right to left), inside a panel row by row. A page with
+/// no gutters keeps the plain row order.
+fn page_order(items: &[InterfaceItem], frame: &Frame, rtl: bool) -> Vec<usize> {
+    let rects: Vec<Rect> = items.iter().map(|it| it.rect).collect();
+    let panels = manga_core::panels::find(frame, rtl);
+    manga_core::panels::reading_order(&rects, &panels, rtl)
 }
 
 /// The bubbles of a page: from Windows OCR lines (`bubbles`), and — for
@@ -150,7 +159,7 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
         let patch = manga_core::clean::clean_text(frame, &f.text, f.char_px, f.paper, true);
         items.push(InterfaceItem { fg: contrast_text(f.paper), busy: false, bg: f.paper, rect, src, dst: None, line_h: f.char_px, lines: f.lines.max(2), patch: patch.map(Arc::new) });
     }
-    let order = layout::reading_order(&items.iter().map(|it| it.rect).collect::<Vec<_>>(), true);
+    let order = page_order(&items, frame, true);
     order.into_iter().map(|i| items[i].clone()).collect()
 }
 

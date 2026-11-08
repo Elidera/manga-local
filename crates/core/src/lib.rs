@@ -14,6 +14,7 @@ pub mod history;
 pub mod image;
 pub mod lang;
 pub mod names;
+pub mod panels;
 pub mod layout;
 pub mod memory;
 pub mod prompt;
