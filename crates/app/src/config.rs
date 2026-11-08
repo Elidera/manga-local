@@ -278,7 +278,7 @@ pub fn default_models() -> Vec<ModelPreset> {
     vec![
         ModelPreset {
             id: "hymt2-1.8b".into(),
-            name: "Hy-MT2 1.8B Q4_K_M — быстрый (по умолчанию)".into(),
+            name: "Hy-MT2 1.8B Q4_K_M — быстрый, для слабых ПК (по умолчанию)".into(),
             prompt: "hymt".into(),
             hf: "tencent/Hy-MT2-1.8B-GGUF:Q4_K_M".into(),
             temperature: 0.7,
@@ -290,7 +290,7 @@ pub fn default_models() -> Vec<ModelPreset> {
         },
         ModelPreset {
             id: "hymt2-7b".into(),
-            name: "Hy-MT2 7B Q4_K_M — качественный (мощный ПК)".into(),
+            name: "Hy-MT2 7B Q4_K_M — точный, но медленнее Gemma (видеокарта от 6 ГБ)".into(),
             prompt: "hymt".into(),
             hf: "tencent/Hy-MT2-7B-GGUF:Q4_K_M".into(),
             temperature: 0.7,
@@ -311,24 +311,6 @@ pub fn default_models() -> Vec<ModelPreset> {
             repeat_penalty: 1.05,
             no_think: true,
             size_gb: 5.0,
-            ..Default::default()
-        },
-        ModelPreset {
-            id: "qwen3.5-2b".into(),
-            name: "Qwen3.5 2B Q4_K_M — альтернатива".into(),
-            prompt: "instruct".into(),
-            hf: "unsloth/Qwen3.5-2B-GGUF:Q4_K_M".into(),
-            no_think: true,
-            size_gb: 1.35,
-            ..Default::default()
-        },
-        ModelPreset {
-            id: "qwen3.5-4b".into(),
-            name: "Qwen3.5 4B Q4_K_M — литературный".into(),
-            prompt: "instruct".into(),
-            hf: "unsloth/Qwen3.5-4B-GGUF:Q4_K_M".into(),
-            no_think: true,
-            size_gb: 2.9,
             ..Default::default()
         },
     ]
@@ -409,7 +391,11 @@ impl Config {
         if cfg.models.is_empty() {
             cfg.models = default_models();
         } else {
-            // Presets added in newer versions appear in older configs too.
+            // Presets added in newer versions appear in older configs too; the
+            // Qwen presets of the first versions translated worse and are gone
+            // unless the reader had one of them selected.
+            let active = cfg.llm.active_model.clone();
+            cfg.models.retain(|m| !(m.id.starts_with("qwen3.5-") && m.id != active));
             for m in default_models() {
                 if !cfg.models.iter().any(|x| x.id == m.id) {
                     cfg.models.push(m);
