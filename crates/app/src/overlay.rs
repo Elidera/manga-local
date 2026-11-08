@@ -131,8 +131,17 @@ fn scene(u: &UiState, cfg: &Config, screen: (f32, f32), scale: f32) -> Vec<El> {
                     out.push(El::List { text: text.join("\n") });
                 }
             } else {
+                // The bubble under the mouse shows its original (nothing of ours over it).
+                let hover = if cfg.interface.hover_original { Some(cursor()) } else { None };
                 for it in &view.items {
                     let Some(dst) = &it.dst else { continue };
+                    if let Some((mx, my)) = hover {
+                        let m = it.line_h.max(8.0) * 0.6;
+                        let (x, y) = (mx as f32, my as f32);
+                        if x >= it.rect.x - m && x <= it.rect.x + it.rect.w + m && y >= it.rect.y - m && y <= it.rect.y + it.rect.h + m {
+                            continue;
+                        }
+                    }
                     out.push(El::Label {
                         rect: [it.rect.x, it.rect.y, it.rect.w, it.rect.h],
                         text: dst.clone(),

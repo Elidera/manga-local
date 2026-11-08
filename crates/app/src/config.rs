@@ -160,8 +160,11 @@ pub struct Interface {
     pub upscale: u32,
     pub font_scale: f32,
     pub max_lines: usize,
-    /// Hide the translated screen automatically when the game picture changes.
+    /// Reading mode: hide while the page scrolls, translate again when it stops.
     pub auto_hide: bool,
+    /// The mouse over a bubble takes our translation away from it, so the
+    /// original under it can be read.
+    pub hover_original: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,7 +347,7 @@ impl Default for Dialogue {
 
 impl Default for Interface {
     fn default() -> Self {
-        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true }
+        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true }
     }
 }
 
