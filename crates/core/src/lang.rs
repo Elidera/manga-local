@@ -1,4 +1,6 @@
 //! Source languages we translate from, and cheap script-based detection.
+//! Manga Local reads Korean (manhwa), Japanese (manga) and Chinese (manhua);
+//! English stays for scanlations and old configs.
 
 use crate::text;
 
@@ -6,13 +8,20 @@ use crate::text;
 pub enum Lang {
     Zh,
     En,
+    Ko,
+    Ja,
 }
 
 impl Lang {
-    /// "zh" / "en" (config values). Anything unknown → Chinese.
+    /// "ko" / "ja" / "zh" / "en" (config values). Anything unknown → Chinese.
     pub fn from_code(s: &str) -> Lang {
-        if s.trim().to_ascii_lowercase().starts_with("en") {
+        let s = s.trim().to_ascii_lowercase();
+        if s.starts_with("en") {
             Lang::En
+        } else if s.starts_with("ko") {
+            Lang::Ko
+        } else if s.starts_with("ja") || s.starts_with("jp") {
+            Lang::Ja
         } else {
             Lang::Zh
         }
@@ -22,6 +31,8 @@ impl Lang {
         match self {
             Lang::Zh => "zh",
             Lang::En => "en",
+            Lang::Ko => "ko",
+            Lang::Ja => "ja",
         }
     }
 
@@ -29,6 +40,28 @@ impl Lang {
         match self {
             Lang::Zh => "китайский",
             Lang::En => "английский",
+            Lang::Ko => "корейский",
+            Lang::Ja => "японский",
+        }
+    }
+
+    /// «с корейского», «с японского» …
+    pub fn from_ru(self) -> &'static str {
+        match self {
+            Lang::Zh => "с китайского",
+            Lang::En => "с английского",
+            Lang::Ko => "с корейского",
+            Lang::Ja => "с японского",
+        }
+    }
+
+    /// Name of the language in English (for Hy-MT prompts).
+    pub fn name_en(self) -> &'static str {
+        match self {
+            Lang::Zh => "Chinese",
+            Lang::En => "English",
+            Lang::Ko => "Korean",
+            Lang::Ja => "Japanese",
         }
     }
 }
@@ -59,11 +92,20 @@ pub fn latin_ratio(s: &str) -> f32 {
     }
 }
 
-/// Guess the language of a piece of game text by script.
+/// Guess the language of a piece of text by script. Hangul means Korean and
+/// kana means Japanese; ideographs alone are taken as Chinese (a short Japanese
+/// line of kanji only, like 大丈夫, is then translated with the Chinese prompt,
+/// which Hy-MT handles too).
 pub fn detect(s: &str) -> Option<Lang> {
     let han = text::han_count(s);
     let lat = latin_count(s);
-    if han >= 1 && han * 3 >= lat {
+    let hangul = text::hangul_count(s);
+    let kana = text::kana_count(s);
+    if hangul >= 1 && hangul * 3 >= lat + han {
+        Some(Lang::Ko)
+    } else if kana >= 1 && (kana + han) * 3 >= lat {
+        Some(Lang::Ja)
+    } else if han >= 1 && han * 3 >= lat {
         Some(Lang::Zh)
     } else if lat >= 2 {
         Some(Lang::En)
@@ -155,6 +197,8 @@ fn looks_misread(s: &str) -> bool {
 /// Is this OCR result real subtitle text in `lang` (and not noise, icons or another script)?
 pub fn is_subtitle(s: &str, lang: Lang) -> bool {
     match lang {
+        Lang::Ko => text::hangul_count(s) >= 2 && script_ratio(s, lang) >= 0.4,
+        Lang::Ja => text::kana_count(s) + text::han_count(s) >= 2 && script_ratio(s, lang) >= 0.4,
         Lang::Zh => text::han_count(s) >= 2 && text::han_ratio(s) >= 0.4,
         Lang::En => {
             // At least one real word of 3+ letters and mostly letters.
@@ -167,12 +211,35 @@ pub fn is_subtitle(s: &str, lang: Lang) -> bool {
 /// Is a single OCR line on a game screen (menu label, button) worth translating?
 pub fn is_label(s: &str, lang: Lang) -> bool {
     match lang {
+        // A bubble can hold a single syllable («응», «え»): one letter of the
+        // script is enough when the line is mostly that script.
+        Lang::Ko => text::hangul_count(s) >= 1 && script_ratio(s, lang) >= 0.4,
+        Lang::Ja => text::kana_count(s) + text::han_count(s) >= 1 && script_ratio(s, lang) >= 0.4,
         Lang::Zh => text::has_han(s),
         Lang::En => {
             let has_word = s.split(|c: char| !is_latin_letter(c)).any(|w| w.chars().count() >= 2 && w.chars().any(|c| "aeiouyAEIOUY".contains(c)));
             latin_count(s) >= 2 && latin_ratio(s) >= 0.5 && has_word && !looks_misread(s)
         }
     }
+}
+
+/// Share of the language's own letters among non-space, non-punctuation
+/// characters (punctuation like «……!?» is common in bubbles and is not noise).
+pub fn script_ratio(s: &str, lang: Lang) -> f32 {
+    let counted: Vec<char> = s.chars().filter(|c| !c.is_whitespace() && !text::is_cjk_punct(*c) && !c.is_ascii_punctuation()).collect();
+    if counted.is_empty() {
+        return 0.0;
+    }
+    let own = counted
+        .iter()
+        .filter(|&&c| match lang {
+            Lang::Ko => text::is_hangul(c),
+            Lang::Ja => text::is_kana(c) || text::is_han(c),
+            Lang::Zh => text::is_han(c),
+            Lang::En => is_latin_letter(c),
+        })
+        .count();
+    own as f32 / counted.len() as f32
 }
 
 #[cfg(test)]
@@ -187,6 +254,27 @@ mod tests {
         assert_eq!(detect("30 / 40"), None);
         assert_eq!(Lang::from_code("en-US"), Lang::En);
         assert_eq!(Lang::from_code("zh-Hans-CN"), Lang::Zh);
+        assert_eq!(Lang::from_code("ko-KR"), Lang::Ko);
+        assert_eq!(Lang::from_code("ja"), Lang::Ja);
+        assert_eq!(detect("뭐야, 벌써 왔어?"), Some(Lang::Ko));
+        assert_eq!(detect("ちょっと待って！"), Some(Lang::Ja));
+        assert_eq!(detect("先輩、遅いですよ"), Some(Lang::Ja));
+        assert_eq!(detect("你来了"), Some(Lang::Zh));
+    }
+
+    #[test]
+    fn korean_and_japanese_bubbles() {
+        assert!(is_label("응", Lang::Ko));
+        assert!(is_label("뭐야?!", Lang::Ko));
+        assert!(is_label("……네.", Lang::Ko));
+        assert!(!is_label("123", Lang::Ko));
+        assert!(!is_label("Chapter 12", Lang::Ko));
+        assert!(!is_label("ちょっと", Lang::Ko));
+        assert!(is_label("え？", Lang::Ja));
+        assert!(is_label("大丈夫だよ", Lang::Ja));
+        assert!(!is_label("뭐야", Lang::Ja));
+        assert!(is_subtitle("오늘은 집에 일찍 갈게.", Lang::Ko));
+        assert!(!is_subtitle("응", Lang::Ko));
     }
 
     #[test]

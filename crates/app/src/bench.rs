@@ -21,7 +21,9 @@ pub fn lines_file(shared: &Shared) -> PathBuf {
     if user.exists() {
         user
     } else {
-        shared.paths.install.join("bench").join(if shared.cfg().source_lang() == wuxia_core::lang::Lang::En { "wuwa_en_lines.txt" } else { "wwm_lines.txt" })
+        let lang = shared.cfg().source_lang();
+        let file = if lang == wuxia_core::lang::Lang::En { "ko_lines.txt".to_string() } else { format!("{}_lines.txt", lang.code()) };
+        shared.paths.install.join("bench").join(file)
     }
 }
 

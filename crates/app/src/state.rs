@@ -132,6 +132,10 @@ pub struct InterfaceItem {
     pub fg: [u8; 3],
     /// Busy background: draw a plate instead of a flat mask.
     pub busy: bool,
+    /// Height of one OCR line of the original, px: the starting font size.
+    pub line_h: f32,
+    /// How many OCR lines the bubble had (1 = a single label).
+    pub lines: usize,
 }
 
 #[derive(Debug, Clone, Default)]

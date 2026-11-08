@@ -1,5 +1,6 @@
-//! Interface Mode: on a hotkey, OCR the whole screen and paint Russian text over
-//! the Chinese labels (mask + text), keeping the layout.
+//! Page translation (F8): OCR the reader window, group the lines into speech
+//! bubbles, translate all bubbles of the page in one request and paint the
+//! Russian text inside each bubble over the original (fill + wrapped text).
 
 use crate::capture::{self, PxRect};
 use crate::ocr::Ocr;
@@ -9,7 +10,10 @@ use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wuxia_core::image::{contrast_text, luma, Frame};
+use crate::ocr::OcrLine;
+use wuxia_core::image::{contrast_text, luma, Frame, Rect};
+use wuxia_core::lang::Lang;
+use wuxia_core::layout;
 use wuxia_core::prompt::TextKind;
 
 /// Coarse 32×18 luminance grid of the whole screen, for auto-hide.
@@ -48,6 +52,31 @@ pub fn upscale_for(configured: u32, screen_h: i32) -> u32 {
 /// Is this OCR line a label F8 translates? (Shared with `--selftest`.)
 pub fn is_label_line(text: &str, lang: wuxia_core::lang::Lang, tr: &Translator) -> bool {
     wuxia_core::lang::is_label(text, lang) && !tr.should_skip(text)
+}
+
+/// Group the OCR lines of a page into bubbles, in reading order. Each bubble
+/// keeps its text joined the way the language is written, its box (`frame`
+/// coordinates) and the colour around it. Shared with `--selftest`.
+pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) -> Vec<InterfaceItem> {
+    let kept: Vec<&OcrLine> = lines.iter().filter(|l| is_label_line(&l.text, lang, tr)).collect();
+    let rects: Vec<Rect> = kept.iter().map(|l| l.rect).collect();
+    let groups = layout::group_lines(&rects);
+    let items: Vec<InterfaceItem> = groups
+        .iter()
+        .map(|g| {
+            let rect = layout::block_rect(&rects, g);
+            let texts: Vec<&str> = g.iter().map(|&i| kept[i].text.as_str()).collect();
+            let src = tr.fix_ocr(&wuxia_core::text::join_lines_for(&texts, lang));
+            let line_h = g.iter().map(|&i| rects[i].h).sum::<f32>() / g.len() as f32;
+            // Look at the paper a little outside the text: flat = a bubble (fill
+            // with its colour), varied = text over artwork (dark plate).
+            let (bg, spread) = frame.ring_stats(&rect, (line_h * 0.35).clamp(3.0, 14.0));
+            InterfaceItem { fg: contrast_text(bg), busy: spread > 28.0, bg, rect, src, dst: None, line_h, lines: g.len() }
+        })
+        .filter(|it| !it.src.is_empty())
+        .collect();
+    let order = layout::reading_order(&items.iter().map(|it| it.rect).collect::<Vec<_>>(), lang == Lang::Ja);
+    order.into_iter().map(|i| items[i].clone()).collect()
 }
 
 pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
@@ -98,27 +127,29 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
         }
     };
     let ocr_ms = t0.elapsed().as_millis();
-    let items: Vec<InterfaceItem> = lines
+    let n_lines = lines.len();
+    let items: Vec<InterfaceItem> = bubbles(&lines, lang, &tr, &frame)
         .into_iter()
-        .filter(|l| is_label_line(&l.text, lang, &tr))
         .take(cfg.interface.max_lines)
-        .map(|l| {
-            let bg = frame.ring_color(&l.rect);
-            InterfaceItem {
-                fg: contrast_text(bg),
-                busy: frame.busyness(&l.rect) > 30.0,
-                bg,
-                rect: l.rect.offset(full.x as f32, full.y as f32), // to screen coordinates
-                src: tr.fix_ocr(&l.text),
-                dst: None,
-            }
+        .map(|mut it| {
+            it.rect = it.rect.offset(full.x as f32, full.y as f32); // to screen coordinates
+            it
         })
         .collect();
-    tracing::info!(target: "interface", "OCR экрана: {} строк за {ocr_ms} мс", items.len());
+    shared.ui(|u| {
+        u.stats.add_ocr(ocr_ms);
+        let id = u.ocr_debug.as_ref().map_or(0, |d| d.id) + 1;
+        let text = items.iter().map(|it| it.src.as_str()).collect::<Vec<_>>().join("\n");
+        u.ocr_debug = Some(crate::state::OcrDebug { frame: Arc::new(frame.clone()), text, ms: ocr_ms, id });
+    });
+    tracing::info!(target: "interface", "OCR страницы: {n_lines} строк → {} пузырей за {ocr_ms} мс", items.len());
+    for it in &items {
+        tracing::debug!(target: "interface", "пузырь {}×{} строк: {}", it.rect.w as i32, it.lines, it.src);
+    }
     if items.is_empty() {
         shared.ui(|u| {
             u.interface = None;
-            u.notice("На экране не найден текст на языке игры")
+            u.notice(format!("На экране не найден текст ({})", lang.name_ru()))
         });
         return;
     }
@@ -131,7 +162,7 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
         if done.contains_key(&it.src) || unique.contains(&it.src) {
             continue;
         }
-        match tr.lookup(&preset.id, &it.src, TextKind::Interface) {
+        match tr.lookup(&preset.id, &it.src, TextKind::Dialogue) {
             Some(t) => {
                 done.insert(it.src.clone(), t);
             }
@@ -194,11 +225,12 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
             }
         })
     };
-    // Batches of up to 20 labels / ~600 chars: one model call each.
+    // The whole page in one call when it fits (up to 24 bubbles / ~900 chars):
+    // the model then sees the conversation and keeps names the same.
     let mut chunks: Vec<Vec<String>> = Vec::new();
     for src in unique {
         let fits = chunks.last().map_or(false, |c: &Vec<String>| {
-            c.len() < 20 && c.iter().map(|s| s.chars().count()).sum::<usize>() + src.chars().count() < 600
+            c.len() < 24 && c.iter().map(|s| s.chars().count()).sum::<usize>() + src.chars().count() < 900
         });
         if fits {
             chunks.last_mut().unwrap().push(src);
@@ -213,7 +245,7 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
         let mut rest: Vec<String> = chunk.clone();
         if chunk.len() > 1 {
             let t0 = std::time::Instant::now();
-            match tr.translate_batch(&preset, &game, &chunk).await {
+            match tr.translate_batch(&preset, &game, &chunk, TextKind::Dialogue).await {
                 Ok(out) => {
                     shared.ui(|u| u.stats.add_llm(t0.elapsed().as_millis() / chunk.len() as u128, false));
                     rest.clear();
@@ -224,24 +256,24 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
                         }
                     }
                     if !rest.is_empty() {
-                        tracing::info!("пакет: {} переведу по одной", wuxia_core::text::count_ru(rest.len(), "надпись", "надписи", "надписей"));
+                        tracing::info!("пакет: {} переведу по одному", wuxia_core::text::count_ru(rest.len(), "пузырь", "пузыря", "пузырей"));
                     }
                 }
-                Err(e) => tracing::warn!("пакетный перевод экрана: {e}; перевожу по одной"),
+                Err(e) => tracing::warn!("пакетный перевод страницы: {e}; перевожу по одному"),
             }
         }
         for src in rest {
             if shared.interface_gen.load(Ordering::SeqCst) != gen {
                 return;
             }
-            let res = tr.translate(&preset, &game, "", &src, TextKind::Interface, Opts { use_cache: true, use_history: false }, |_| {}).await;
+            let res = tr.translate(&preset, &game, "", &src, TextKind::Dialogue, Opts { use_cache: true, use_history: false }, |_| {}).await;
             let dst = match res {
                 Ok(o) => {
                     shared.ui(|u| u.stats.add_llm(o.ms, o.cached));
                     o.text
                 }
                 Err(e) => {
-                    tracing::warn!("UI-перевод «{src}»: {e}");
+                    tracing::warn!("перевод пузыря «{src}»: {e}");
                     src.clone()
                 }
             };

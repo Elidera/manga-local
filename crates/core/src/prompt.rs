@@ -75,8 +75,8 @@ fn gender_en(g: Gender) -> &'static str {
     }
 }
 
-const HYMT_STYLE_DIALOGUE: &str = "武侠小说的文学风格，用词典雅，语言自然流畅";
-const HYMT_STYLE_INTERFACE: &str = "游戏界面用语，简洁准确";
+const HYMT_STYLE_DIALOGUE: &str = "漫画对白，口语自然流畅，符合人物性格";
+const HYMT_STYLE_INTERFACE: &str = "漫画中的标牌、字幕和拟声词，简洁准确";
 
 fn hymt_terms(terms: &[&Term]) -> String {
     if terms.is_empty() {
@@ -97,8 +97,8 @@ fn src_lang(s: &str) -> Lang {
     lang::detect(s).unwrap_or(Lang::Zh)
 }
 
-const HYMT_EN_STYLE_DIALOGUE: &str = "natural, expressive Russian of a fantasy RPG; spoken dialogue";
-const HYMT_EN_STYLE_INTERFACE: &str = "concise video game interface text";
+const HYMT_EN_STYLE_DIALOGUE: &str = "natural, expressive spoken Russian of a good manga / webtoon translation";
+const HYMT_EN_STYLE_INTERFACE: &str = "short signs, captions and sound effects of a comic";
 
 fn hymt_terms_en(terms: &[&Term]) -> String {
     if terms.is_empty() {
@@ -137,7 +137,9 @@ Do not translate the background information. ");
 }
 
 fn build_hymt(inp: &PromptInput) -> Vec<Message> {
-    if src_lang(inp.source) == Lang::En {
+    // Hy-MT uses the Chinese template only for Chinese sources; Korean,
+    // Japanese and English go through the English one.
+    if src_lang(inp.source) != Lang::Zh {
         return build_hymt_en(inp);
     }
     let style = match inp.kind {
@@ -162,53 +164,47 @@ fn build_hymt(inp: &PromptInput) -> Vec<Message> {
     vec![Message { role: "user", content: p }]
 }
 
-fn instruct_system_en(inp: &PromptInput) -> String {
-    let mut s = format!(
-        "Ты — профессиональный переводчик видеоигр с английского языка на русский. \
-Переводишь текст из игры «{game}».\n\
-Правила:\n\
-1. Точно передавай смысл. Ничего не добавляй и не выдумывай.\n\
-2. Пиши естественным живым русским языком, как в хорошей официальной локализации. Сохраняй характер и интонацию персонажа.\n\
-3. Идиомы и игру слов передавай по смыслу, а не дословно.\n\
-4. Имена и названия, которых нет в глоссарии, транскрибируй по-русски (Jinzhou — Цзиньчжоу, Verina — Верина).\n\
-5. Термины из глоссария используй строго в указанном виде, склоняя по правилам русского языка.\n\
-6. Обращение на «ты» или «вы» выбирай по контексту и отношениям персонажей.\n\
-7. Выведи ТОЛЬКО перевод: без кавычек, пояснений и оригинала.",
-        game = inp.game
-    );
-    match inp.kind {
-        TextKind::Interface => s.push_str("\n8. Это надпись интерфейса: переводи кратко, как в официальной локализации; не добавляй точку в конце, если её нет в оригинале."),
-        TextKind::Name => s.push_str("\n8. Это имя или прозвище персонажа: дай только русскую форму имени."),
-        TextKind::Dialogue => {}
+/// How names are written in Russian for each source language.
+fn names_rule(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ko => "Корейские имена транскрибируй по системе Концевича (김민준 — Ким Минджун, 서울 — Сеул).",
+        Lang::Ja => "Японские имена транскрибируй по системе Поливанова (さくら — Сакура, 翔太 — Сёта, 東京 — Токио).",
+        Lang::Zh => "Китайские имена и топонимы транскрибируй по системе Палладия (李寻 — Ли Сюнь, 开封 — Кайфэн).",
+        Lang::En => "Имена транскрибируй по-русски (Jinwoo — Джину, Sakura — Сакура).",
     }
-    if !inp.style_hint.trim().is_empty() {
-        s.push_str("\nДополнительное пожелание к стилю: ");
-        s.push_str(inp.style_hint.trim());
+}
+
+/// Forms of address that a Russian reader would not get word for word.
+fn address_rule(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ko => "Обращения (오빠, 언니, 형, 누나, 선배, 씨, 님) передавай по смыслу и по отношениям героев: по имени, «братик», «сестрёнка», «сонбэ», «господин».",
+        Lang::Ja => "Именные суффиксы (-сан, -кун, -тян, -сама, -сэмпай/сэнпай) передавай по смыслу: обычно по имени, «господин», «сэмпай»; не пиши их через дефис к каждому имени.",
+        Lang::Zh => "Обращения (师父, 师兄, 前辈, 大人, 哥哥 и т. п.) передавай естественно по контексту: «наставник», «старший брат», «почтенный», «господин».",
+        Lang::En => "Обращения передавай естественно по контексту.",
     }
-    s
 }
 
 fn instruct_system(inp: &PromptInput) -> String {
-    if src_lang(inp.source) == Lang::En {
-        return instruct_system_en(inp);
-    }
+    let lang = src_lang(inp.source);
+    let work = if inp.game.trim().is_empty() { String::new() } else { format!(" Переводишь «{}».", inp.game.trim()) };
     let mut s = format!(
-        "Ты — профессиональный литературный переводчик китайских игр жанра уся на русский язык. \
-Переводишь текст из игры «{game}».\n\
+        "Ты — профессиональный переводчик манги, манхвы и маньхуа {from} языка на русский.{work}\n\
 Правила:\n\
 1. Точно передавай смысл. Ничего не добавляй и не выдумывай.\n\
-2. Пиши естественным литературным русским языком. Сохраняй возвышенный тон уся без излишней архаики.\n\
-3. Классический китайский (文言), чэнъюи, поговорки и стихи переводи по смыслу, сохраняя образность. \
-Не переводи их дословно, если так теряется смысл.\n\
-4. Имена и топонимы транскрибируй по системе Палладия (например, Ли Сюнь, Кайфэн), если их нет в глоссарии.\n\
-5. Термины из глоссария используй строго в указанном виде, склоняя по правилам русского языка.\n\
-6. Обращения (少侠, 前辈, 师父, 大人 и т. п.) передавай естественно по контексту: «молодой герой», «почтенный», «наставник», «господин».\n\
+2. Пиши живым разговорным русским, как в хорошем официальном переводе комикса. Сохраняй характер и интонацию героя: \
+грубый говорит грубо, вежливый — вежливо. Реплики в пузырях короткие — перевод тоже должен быть коротким.\n\
+3. Идиомы, шутки и игру слов передавай по смыслу, а не дословно.\n\
+4. {names}\n\
+5. Термины и имена из глоссария используй строго в указанном виде, склоняя по правилам русского языка.\n\
+6. {address} Выбирай «ты» или «вы» по отношениям героев.\n\
 7. Выведи ТОЛЬКО перевод: без кавычек, пояснений, транскрипции и оригинала.",
-        game = inp.game
+        from = lang.from_ru(),
+        names = names_rule(lang),
+        address = address_rule(lang),
     );
     match inp.kind {
-        TextKind::Interface => s.push_str("\n8. Это надпись интерфейса: переводи кратко, как в официальной локализации; не добавляй точку в конце, если её нет в оригинале."),
-        TextKind::Name => s.push_str("\n8. Это имя или прозвище персонажа: дай только русскую форму имени."),
+        TextKind::Interface => s.push_str("\n8. Это надпись на картинке (вывеска, табличка, подпись или звук): переводи кратко; не добавляй точку в конце, если её нет в оригинале."),
+        TextKind::Name => s.push_str("\n8. Это имя или прозвище героя: дай только русскую форму имени."),
         TextKind::Dialogue => {}
     }
     if !inp.style_hint.trim().is_empty() {
@@ -280,49 +276,64 @@ pub fn render_custom(template: &str, inp: &PromptInput) -> Vec<Message> {
 /// Separator between items of a batch request (interface mode).
 pub const BATCH_SEP: &str = "|||";
 
-/// One request for many short interface labels: faster than one request per
-/// label and keeps terminology consistent across the screen.
-pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &str) -> Vec<Message> {
+/// One request for many texts of one screen: faster than one request per text
+/// and keeps names and terms consistent across the page. `Dialogue` = the
+/// speech bubbles of one comic page in reading order (each is still translated
+/// separately, but the model sees the whole conversation); `Interface` =
+/// unrelated short signs and labels.
+pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &str, kind: TextKind) -> Vec<Message> {
     let n = items.len();
     // Numbered so a dropped or merged item does not shift all the others.
     let joined = items.iter().enumerate().map(|(i, s)| format!("[{}]{s}", i + 1)).collect::<Vec<_>>().join(BATCH_SEP);
     let all: String = items.concat();
-    let en = src_lang(&all) == Lang::En;
+    let lang = src_lang(&all);
+    let bubbles = kind == TextKind::Dialogue;
     match style {
-        PromptStyle::HyMt if en => {
+        PromptStyle::HyMt if lang != Lang::Zh => {
             let mut p = hymt_terms_en(terms);
+            let what = if bubbles {
+                format!("{n} speech bubbles of one comic page in reading order")
+            } else {
+                format!("{n} separate short texts of a comic page (signs, captions, sound effects)")
+            };
+            let style = if bubbles { HYMT_EN_STYLE_DIALOGUE } else { HYMT_EN_STYLE_INTERFACE };
             p.push_str(&format!(
-                "Please accurately translate the following text into Russian. You must retain the exact same number of delimiters in the translation. \
-                 The text consists of {n} separate video game interface labels separated by \"{BATCH_SEP}\", each prefixed with its number [1], [2]... \
-                 Keep the numbers and translate each label separately. Only output the translated result without any additional explanation:\n"
+                "Please accurately translate the following {src} text into Russian. You must retain the exact same number of delimiters in the translation. \
+                 The text consists of {what}, separated by \"{BATCH_SEP}\", each prefixed with its number [1], [2]... \
+                 Keep the numbers and translate each one separately. Note that the translation style must strictly conform to [{style}]. \
+                 Only output the translated result without any additional explanation:\n",
+                src = lang.name_en()
             ));
             p.push_str(&joined);
             vec![Message { role: "user", content: p }]
         }
         PromptStyle::HyMt => {
             let mut p = hymt_terms(terms);
+            let (what, style) = if bubbles { ("同一页漫画中按阅读顺序排列的对话气泡", HYMT_STYLE_DIALOGUE) } else { ("漫画中的独立短文字", HYMT_STYLE_INTERFACE) };
             p.push_str(&format!(
-                "将以下文本翻译为俄语。这是游戏界面中的{n}条独立文字，用“{BATCH_SEP}”分隔，每条前面有编号[1]、[2]……\
-                 译文必须保留相同数量的分隔符“{BATCH_SEP}”和原来的编号，且位置不变，每条文字单独翻译。\
-                 译文风格必须严格符合：{HYMT_STYLE_INTERFACE}。注意只需要输出翻译后的结果，不要额外解释：\n"
+                "将以下文本翻译为俄语。这是{n}条{what}，用“{BATCH_SEP}”分隔，每条前面有编号[1]、[2]……\
+                 译文必须保留相同数量的分隔符“{BATCH_SEP}”和原来的编号，且位置不变，每条单独翻译。\
+                 译文风格必须严格符合：{style}。注意只需要输出翻译后的结果，不要额外解释：\n"
             ));
             p.push_str(&joined);
             vec![Message { role: "user", content: p }]
         }
         PromptStyle::Instruct => {
             let dummy = PromptInput {
-                source: if en { "text" } else { "文" },
-                kind: TextKind::Interface,
+                source: &all,
+                kind: if bubbles { TextKind::Dialogue } else { TextKind::Interface },
                 terms: vec![],
                 context_src: String::new(),
                 context_pairs: String::new(),
                 game,
-                style_hint: "", speaker: None,
+                style_hint: "",
+                speaker: None,
             };
             let mut sys = instruct_system(&dummy);
+            let what = if bubbles { "реплик из пузырей одной страницы, по порядку чтения" } else { "отдельных надписей" };
             sys.push_str(&format!(
-                "\n9. На вход подаётся {n} отдельных надписей с номерами [1], [2]…, разделённых «{BATCH_SEP}». \
-                 Переведи каждую отдельно и выведи переводы в том же порядке, с теми же номерами, разделяя их тем же «{BATCH_SEP}»."
+                "\n9. На вход подаётся {n} {what}, с номерами [1], [2]…, разделённых «{BATCH_SEP}». \
+                 Переведи каждую отдельно (но с учётом общего разговора) и выведи переводы в том же порядке, с теми же номерами, разделяя их тем же «{BATCH_SEP}»."
             ));
             let mut u = String::new();
             if !terms.is_empty() {
@@ -442,6 +453,15 @@ fn strip_think(s: &str) -> String {
 const PREFIXES: &[&str] = &["перевод:", "перевод на русский:", "translation:", "russian:", "译文：", "译文:", "русский:", "ответ:"];
 
 /// Turn raw model output into a displayable translation, or reject it.
+fn share(s: &str, count: fn(&str) -> usize) -> f32 {
+    let total = s.chars().filter(|c| !c.is_whitespace()).count();
+    if total == 0 {
+        0.0
+    } else {
+        count(s) as f32 / total as f32
+    }
+}
+
 pub fn clean_output(raw: &str, source: &str) -> Result<String, Reject> {
     let mut s = strip_think(raw).trim().to_string();
     // Remove label prefixes.
@@ -486,7 +506,7 @@ pub fn clean_output(raw: &str, source: &str) -> Result<String, Reject> {
     if s.is_empty() {
         return Err(Reject::Empty);
     }
-    if text::han_ratio(s) > 0.3 {
+    if text::han_ratio(s) > 0.3 || share(s, text::hangul_count) > 0.3 || share(s, text::kana_count) > 0.3 {
         return Err(Reject::NotTranslated);
     }
     // English source: the answer must be mostly Cyrillic (names may stay Latin).
@@ -573,7 +593,7 @@ mod tests {
         assert!(c.ends_with("\n\nRover, we need to reach Jinzhou."));
         let m = build(PromptStyle::Instruct, &inp);
         assert!(m[0].content.contains("с английского"));
-        let b = build_batch(PromptStyle::HyMt, &["Inventory", "Quests"], &[], "G");
+        let b = build_batch(PromptStyle::HyMt, &["Inventory", "Quests"], &[], "G", TextKind::Interface);
         assert!(b[0].content.contains("same number of delimiters"));
         // Untranslated English answer is rejected; Russian with a Latin name passes.
         assert_eq!(clean_output("Rover, we need to go.", "Rover, we need to go."), Err(Reject::NotTranslated));
@@ -593,8 +613,36 @@ mod tests {
         };
         let m = build(PromptStyle::Instruct, &inp);
         assert_eq!(m[0].role, "system");
-        assert!(m[0].content.contains("надпись интерфейса"));
+        assert!(m[0].content.contains("надпись на картинке"));
         assert!(!m[1].content.contains("Предыдущие")); // no context for UI
+    }
+
+    #[test]
+    fn manga_prompts_for_korean_and_japanese() {
+        let inp = |src| PromptInput {
+            source: src,
+            kind: TextKind::Dialogue,
+            terms: vec![],
+            context_src: String::new(),
+            context_pairs: String::new(),
+            game: "",
+            style_hint: "",
+            speaker: None,
+        };
+        let ko = build(PromptStyle::HyMt, &inp("뭐야, 벌써 왔어?"));
+        assert!(ko[0].content.starts_with("Please translate the following text into Russian."), "{}", ko[0].content);
+        assert!(ko[0].content.contains("manga / webtoon"));
+        let ja = build(PromptStyle::Instruct, &inp("ちょっと待って！"));
+        assert!(ja[0].content.contains("с японского"));
+        assert!(ja[0].content.contains("Поливанова"));
+        assert!(!ja[0].content.contains("«»"), "empty title must not be quoted");
+        let b = build_batch(PromptStyle::HyMt, &["뭐야?", "왔어."], &[], "", TextKind::Dialogue);
+        assert!(b[0].content.contains("2 speech bubbles of one comic page"), "{}", b[0].content);
+        assert!(b[0].content.contains("Korean text"));
+        assert!(b[0].content.ends_with("[1]뭐야?|||[2]왔어."));
+        assert_eq!(clean_output("뭐야, 벌써 왔어?", "뭐야, 벌써 왔어?"), Err(Reject::NotTranslated));
+        assert_eq!(clean_output("ちょっと待って！", "ちょっと待って！"), Err(Reject::NotTranslated));
+        assert_eq!(clean_output("Что, уже пришёл?", "뭐야, 벌써 왔어?").unwrap(), "Что, уже пришёл?");
     }
 
     #[test]
@@ -616,7 +664,7 @@ mod tests {
     #[test]
     fn batch_roundtrip() {
         let t = term("背包", "Инвентарь");
-        let m = build_batch(PromptStyle::HyMt, &["背包", "任务", "设置"], &[&t], "G");
+        let m = build_batch(PromptStyle::HyMt, &["背包", "任务", "设置"], &[&t], "G", TextKind::Interface);
         assert!(m[0].content.contains("[1]背包|||[2]任务|||[3]设置"));
         // Model dropped item 2 and added a leading separator: the others survive.
         let r = parse_batch_indexed("|||[1]Инвентарь|||[3] Настройки", 3);
@@ -630,7 +678,7 @@ mod tests {
             vec![Some("Инвентарь".to_string()), Some("Почта".to_string()), Some("Отмена".to_string())]
         );
         assert!(m[0].content.starts_with("参考下面的翻译"));
-        let m = build_batch(PromptStyle::Instruct, &["背包", "任务"], &[], "G");
+        let m = build_batch(PromptStyle::Instruct, &["背包", "任务"], &[], "G", TextKind::Interface);
         assert_eq!(m[0].role, "system");
         assert_eq!(parse_batch("Инвентарь ||| Задания|||Настройки", 3).unwrap(), vec!["Инвентарь", "Задания", "Настройки"]);
         assert_eq!(parse_batch("Инвентарь｜｜｜Задания", 2).unwrap().len(), 2);

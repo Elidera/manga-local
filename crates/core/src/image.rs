@@ -186,6 +186,38 @@ impl Frame {
         [med(&mut rs), med(&mut gs), med(&mut bs)]
     }
 
+    /// Median colour and luminance spread of a ring `pad` px outside `r`.
+    /// Inside a speech bubble the ring is flat paper (spread ≈ 0) even though
+    /// the text itself is black on white; text over artwork gives a large spread.
+    pub fn ring_stats(&self, r: &Rect, pad: f32) -> ([u8; 3], f32) {
+        let x0 = (r.x - pad).max(0.0) as u32;
+        let y0 = (r.y - pad).max(0.0) as u32;
+        let x1 = ((r.x + r.w + pad).max(0.0) as u32).min(self.width.saturating_sub(1));
+        let y1 = ((r.y + r.h + pad).max(0.0) as u32).min(self.height.saturating_sub(1));
+        if x1 <= x0 || y1 <= y0 {
+            return ([0, 0, 0], 0.0);
+        }
+        let mut px: Vec<[u8; 4]> = Vec::new();
+        for x in (x0..=x1).step_by(2) {
+            px.push(self.px(x, y0));
+            px.push(self.px(x, y1));
+        }
+        for y in (y0..=y1).step_by(2) {
+            px.push(self.px(x0, y));
+            px.push(self.px(x1, y));
+        }
+        let ch = |i: usize| {
+            let mut v: Vec<u8> = px.iter().map(|p| p[i]).collect();
+            v.sort_unstable();
+            v[v.len() / 2]
+        };
+        let (b, g, r_) = (ch(0), ch(1), ch(2));
+        let l: Vec<f64> = px.iter().map(|p| luma(p[0], p[1], p[2]) as f64).collect();
+        let m = l.iter().sum::<f64>() / l.len() as f64;
+        let sd = (l.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / l.len() as f64).sqrt() as f32;
+        ([r_, g, b], sd)
+    }
+
     /// Standard deviation of luminance inside `r` — high means busy background,
     /// where a flat mask would look bad (use a backdrop plate instead).
     pub fn busyness(&self, r: &Rect) -> f32 {
@@ -247,5 +279,22 @@ mod tests {
         assert_eq!(c, [200, 0, 0]);
         assert_eq!(contrast_text([250, 250, 250]), [16, 16, 16]);
         assert_eq!(f.busyness(&Rect { x: 0.0, y: 0.0, w: 20.0, h: 20.0 }), 0.0);
+    }
+
+    #[test]
+    fn bubble_ring_is_flat_around_black_text() {
+        // White page, black "text" block in the middle.
+        let mut f = solid(60, 60, [255, 255, 255, 255]);
+        for y in 25..35 {
+            for x in 20..40 {
+                let i = ((y * 60 + x) * 4) as usize;
+                f.bgra[i..i + 4].copy_from_slice(&[0, 0, 0, 255]);
+            }
+        }
+        let text = Rect { x: 16.0, y: 21.0, w: 28.0, h: 18.0 };
+        assert!(f.busyness(&text) > 30.0, "inside the text it looks busy");
+        let (c, sd) = f.ring_stats(&text, 4.0);
+        assert_eq!(c, [255, 255, 255]);
+        assert!(sd < 1.0);
     }
 }

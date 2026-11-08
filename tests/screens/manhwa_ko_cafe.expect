@@ -1,0 +1,8 @@
+# Нарисованная страница манхвы (tools/screens/make_pages.py): четыре пузыря на корейском.
+lang	ko
+bubbles	4
+bubble	뭐야, 벌써 왔어?
+bubble	늦어서 미안해. 길이 너무 막혔어.
+bubble	괜찮아. 나도 방금 도착했어.
+bubble	오늘은 내가 살게. 먹고 싶은 거 다 시켜.
+absent	Chapter 12

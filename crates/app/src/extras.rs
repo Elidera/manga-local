@@ -28,6 +28,22 @@ fn short(s: &str) -> String {
 /// Ctrl+F11: the last dialogue translation is bad — forget it, note it in
 /// bad.tsv and translate the line again (a new sample from the model).
 pub async fn bad_translation(shared: Arc<Shared>, tr: Arc<Translator>) {
+    // A translated page is on screen: translate all its bubbles again.
+    let page: Option<(u64, Vec<(String, String)>)> = shared.ui.lock().unwrap().interface.as_ref().map(|v| {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for it in &v.items {
+            if let Some(d) = &it.dst {
+                if !pairs.iter().any(|(s, _)| s == &it.src) {
+                    pairs.push((it.src.clone(), d.clone()));
+                }
+            }
+        }
+        (v.generation, pairs)
+    });
+    if let Some((gen, pairs)) = page.filter(|(_, p)| !p.is_empty()) {
+        retranslate_page(shared, tr, gen, pairs).await;
+        return;
+    }
     let last: Option<RecentLine> = shared.ui.lock().unwrap().recent.front().cloned();
     let Some(r) = last else {
         shared.ui(|u| u.notice("Пока нечего отмечать: переведённых реплик ещё нет."));
@@ -60,6 +76,55 @@ pub async fn bad_translation(shared: Arc<Shared>, tr: Arc<Translator>) {
             u.notice(format!("Новый перевод: {}", short(&o.text)));
         }),
         Err(e) => shared.ui(|u| u.notice(format!("Перевести заново не удалось: {e}"))),
+    }
+}
+
+/// Forget the translations of the page on screen and translate it again with a
+/// livelier sample, replacing the text in the bubbles as answers come.
+async fn retranslate_page(shared: Arc<Shared>, tr: Arc<Translator>, gen: u64, pairs: Vec<(String, String)>) {
+    let cfg = shared.cfg();
+    let mut preset = cfg.active_model().clone();
+    for (src, dst) in &pairs {
+        tr.forget(&preset.id, src, dst);
+    }
+    preset.temperature = (preset.temperature + 0.2).min(1.0);
+    let game = cfg.general.game_title.clone();
+    shared.ui(|u| {
+        if let Some(v) = u.interface.as_mut().filter(|v| v.generation == gen) {
+            v.pending = pairs.len();
+        }
+        u.notice(format!("Плохой перевод отмечен, перевожу страницу заново ({})", wuxia_core::text::count_ru(pairs.len(), "пузырь", "пузыря", "пузырей")))
+    });
+    let set = |src: &str, dst: String| {
+        shared.ui(|u| {
+            if let Some(v) = u.interface.as_mut().filter(|v| v.generation == gen) {
+                for it in v.items.iter_mut().filter(|it| it.src == src) {
+                    it.dst = Some(dst.clone());
+                }
+                v.pending = v.pending.saturating_sub(1);
+            }
+        })
+    };
+    let srcs: Vec<String> = pairs.iter().map(|(s, _)| s.clone()).collect();
+    let mut rest: Vec<String> = srcs.clone();
+    if srcs.len() > 1 {
+        if let Ok(out) = tr.translate_batch(&preset, &game, &srcs, TextKind::Dialogue).await {
+            rest.clear();
+            for (src, dst) in srcs.iter().zip(out) {
+                match dst {
+                    Some(d) => set(src, d),
+                    None => rest.push(src.clone()),
+                }
+            }
+        }
+    }
+    for src in rest {
+        if shared.ui.lock().unwrap().interface.as_ref().map(|v| v.generation) != Some(gen) {
+            return; // the page was hidden or replaced
+        }
+        let old = pairs.iter().find(|(s, _)| s == &src).map(|(_, d)| d.clone()).unwrap_or_default();
+        let res = tr.translate(&preset, &game, &cfg.dialogue.style_hint, &src, TextKind::Dialogue, Opts { use_cache: true, use_history: false }, |_| {}).await;
+        set(&src, res.map(|o| o.text).unwrap_or(old));
     }
 }
 
@@ -188,7 +253,7 @@ pub fn add_term(shared: &Shared, tr: &Translator, src: &str, dst: &str) {
 
 pub fn export_dicts(shared: &Shared, tr: &Translator, path: &std::path::Path) {
     match std::fs::write(path, tr.export_bundle()) {
-        Ok(()) => shared.ui(|u| u.notice(format!("Словари сохранены: {}. Этот файл можно отправить другим игрокам.", path.display()))),
+        Ok(()) => shared.ui(|u| u.notice(format!("Словари сохранены: {}. Этот файл можно отправить другим читателям.", path.display()))),
         Err(e) => shared.ui(|u| u.notice(format!("Экспорт словарей: {e}"))),
     }
 }
@@ -225,14 +290,14 @@ pub async fn diagnose(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Option<Ocr>
     match &ocr {
         None => add(Some(false), "Распознавание текста Windows не запустилось".into()),
         Some(o) => {
-            for l in [Lang::En, Lang::Zh] {
+            for l in [Lang::Ko, Lang::Ja, Lang::Zh, Lang::En] {
                 let r = o.check(l).await;
                 let needed = l == cfg.source_lang();
                 add(
                     Some(r.is_ok() || !needed),
                     match r {
                         Ok(()) => format!("Распознавание ({}) установлено", l.name_ru()),
-                        Err(e) => format!("Распознавание ({}): {e}{}", l.name_ru(), if needed { "" } else { " — для текущей игры не нужно" }),
+                        Err(e) => format!("Распознавание ({}): {e}{}", l.name_ru(), if needed { "" } else { " — для выбранного языка не нужно" }),
                     },
                 );
             }
@@ -262,16 +327,16 @@ pub async fn diagnose(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Option<Ocr>
     // Game window.
     let class = crate::config::profile(&cfg.general.profile).window_class;
     match win::find_game_window(&cfg.general.window_match, class) {
-        None => add(Some(false), format!("Окно игры «{}» не найдено — запустите игру перед проверкой", cfg.general.game_title)),
+        None => add(Some(false), "Окно для чтения не найдено — откройте браузер с мангой перед проверкой".to_string()),
         Some(g) => {
-            add(Some(true), format!("Окно игры: «{}» [{}], {}×{} в {},{}", g.title.trim(), g.class, g.rect.2, g.rect.3, g.rect.0, g.rect.1));
+            add(Some(true), format!("Окно для чтения: «{}» [{}], {}×{} в {},{}", g.title.trim(), g.class, g.rect.2, g.rect.3, g.rect.0, g.rect.1));
             if g.minimized {
                 add(None, "Игра сейчас свёрнута".into());
             }
             let full = g.rect.0 <= 0 && g.rect.1 <= 0 && g.rect.2 >= sw && g.rect.3 >= sh;
             add(None, format!("Игра {}", if full { "на весь экран" } else { "в окне" }));
             if g.topmost {
-                add(None, "Окно игры «поверх всех» — перевод поднимается над ним раз в полсекунды".into());
+                add(None, "Окно для чтения «поверх всех» — перевод поднимается над ним раз в полсекунды".into());
             }
         }
     }
@@ -287,7 +352,7 @@ pub async fn diagnose(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Option<Ocr>
     // Overlay and capture.
     add(
         Some(win::find_window(crate::overlay::TITLE).is_some()),
-        if win::find_window(crate::overlay::TITLE).is_some() { "Окно перевода поверх игры создано".into() } else { "Окно перевода не создано".into() },
+        if win::find_window(crate::overlay::TITLE).is_some() { "Окно перевода поверх окон создано".into() } else { "Окно перевода не создано".into() },
     );
     match capture::capture(PxRect { x: 0, y: 0, w: sw, h: sh }) {
         Ok(f) => {

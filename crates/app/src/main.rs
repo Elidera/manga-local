@@ -488,8 +488,8 @@ mod app {
                         let lang = wuxia_core::lang::detect(&text).unwrap_or(cfg.source_lang());
                         let src = tr.fix_ocr(&wuxia_core::text::normalize_for(&text, lang));
                         let short = match lang {
-                            wuxia_core::lang::Lang::Zh => src.chars().count() <= 8,
-                            wuxia_core::lang::Lang::En => src.split_whitespace().count() <= 3,
+                            wuxia_core::lang::Lang::Zh | wuxia_core::lang::Lang::Ja => src.chars().count() <= 8,
+                            wuxia_core::lang::Lang::En | wuxia_core::lang::Lang::Ko => src.split_whitespace().count() <= 2,
                         };
                         let kind = if short && !src.contains(['，', '。', '！', '？', '.', '!', '?']) {
                             wuxia_core::prompt::TextKind::Interface

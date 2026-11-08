@@ -11,9 +11,9 @@ on:
         required: false
         default: "hymt2-1.8b"
       langs:
-        description: "Source languages to test: en (Wuthering Waves), zh (Where Winds Meet) or en,zh"
+        description: "Source languages to test (comma separated): ko, ja, zh"
         required: false
-        default: "en,zh"
+        default: "ko,ja"
   push:
     branches: [main]
     paths:
@@ -33,7 +33,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       MODELS: ${{ github.event.inputs.models || 'hymt2-1.8b' }}
-      LANGS: ${{ github.event.inputs.langs || 'en,zh' }}
+      LANGS: ${{ github.event.inputs.langs || 'ko,ja' }}
       LLAMA_CACHE: ${{ github.workspace }}/models
     steps:
       - uses: actions/checkout@v4
@@ -80,20 +80,14 @@ jobs:
               if ! kill -0 $pid 2>/dev/null; then echo "server died"; tail -40 "reports/$id.server.log"; echo "::endgroup::"; return 1; fi
               sleep 5
             done
-            if [[ ",$LANGS," == *",en,"* ]]; then
-              ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (EN, WuWa)" --prompt "$prompt" $extra \
-                --game "Wuthering Waves" --profile wuwa \
-                --lines assets/bench/wuwa_en_lines.txt --glossary assets/glossary --out "reports/$id.en.md" || true
-              ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (EN, WuWa)" --prompt "$prompt" $extra --batch \
-                --game "Wuthering Waves" --profile wuwa \
-                --lines assets/bench/wuwa_en_ui.txt --glossary assets/glossary --out "reports/$id.en.ui.md" || true
-            fi
-            if [[ ",$LANGS," == *",zh,"* ]]; then
-              ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (ZH, WWM)" --prompt "$prompt" $extra \
-                --lines assets/bench/wwm_lines.txt --glossary assets/glossary --out "reports/$id.md" || true
-              ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (ZH, WWM)" --prompt "$prompt" $extra --batch \
-                --lines assets/bench/ui_lines.txt --glossary assets/glossary --out "reports/$id.ui.md" || true
-            fi
+            for lang in ko ja zh; do
+              if [[ ",$LANGS," == *",$lang,"* ]]; then
+                ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (${lang^^})" --prompt "$prompt" $extra \
+                  --lines "assets/bench/${lang}_lines.txt" --glossary assets/glossary --out "reports/$id.$lang.md" || true
+                ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (${lang^^})" --prompt "$prompt" $extra --batch \
+                  --lines "assets/bench/${lang}_lines.txt" --glossary assets/glossary --out "reports/$id.$lang.page.md" || true
+              fi
+            done
             kill $pid; wait $pid 2>/dev/null || true
             tail -5 "reports/$id.server.log"
             echo "::endgroup::"
@@ -112,7 +106,7 @@ jobs:
           {
             echo "# Проверка качества перевода"
             echo
-            echo "Процессор GitHub (без видеокарты): время здесь в несколько раз больше, чем на игровом ПК."
+            echo "Процессор GitHub (без видеокарты): время здесь в несколько раз больше, чем на ПК с видеокартой."
             echo
             cat reports/*.md 2>/dev/null
           } >> "$GITHUB_STEP_SUMMARY"

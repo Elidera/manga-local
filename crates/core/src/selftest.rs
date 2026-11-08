@@ -1,14 +1,17 @@
 //! Screenshot tests: what the translator must (and must not) find on a picture.
 //!
-//! Each test case is a game screenshot `name.png` with a text file `name.expect`
-//! next to it. The app runs its real pipeline on the picture (Windows OCR, the
-//! same filters and grouping as in the game, see `wuxia-local --selftest`) and
-//! this module compares the result with the expectations.
+//! Each test case is a screenshot `name.png` (a manga / manhwa page) with a text
+//! file `name.expect` next to it. The app runs its real pipeline on the picture
+//! (Windows OCR, the same filters and bubble grouping as F8, see
+//! `manga-local --selftest`) and this module compares the result with the
+//! expectations.
 //!
 //! `.expect` format — one rule per line, `key<TAB>value` (or `key value`), `#` comments:
 //!
 //! ```text
-//! lang      en                      # en or zh (default: en)
+//! lang      ko                      # ko, ja, zh or en (default: en)
+//! bubble    늦어서 미안해            # some speech bubble (F8) contains this
+//! bubbles   4                       # F8 finds exactly this many bubbles
 //! speaker   Langsheng               # a speech block has this speaker name
 //! speech    nothing quite like being on duty   # some speech block contains this
 //! absent    User ID                 # nothing found contains this
@@ -29,6 +32,8 @@ pub enum Rule {
     Absent(String),
     Label(String),
     MaxSpeech(usize),
+    Bubble(String),
+    Bubbles(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +49,8 @@ pub struct Found {
     pub speech: Vec<String>,
     /// Labels F8 would translate.
     pub labels: Vec<String>,
+    /// Speech bubbles F8 would translate (lines grouped, in reading order).
+    pub bubbles: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +79,8 @@ pub fn parse(s: &str) -> Result<Expect, String> {
             "absent" => need(&val).map(|_| e.rules.push(Rule::Absent(val)))?,
             "label" => need(&val).map(|_| e.rules.push(Rule::Label(val)))?,
             "max_speech" => e.rules.push(Rule::MaxSpeech(val.parse().map_err(|_| format!("строка {}: max_speech — нужно число", n + 1))?)),
+            "bubble" => need(&val).map(|_| e.rules.push(Rule::Bubble(val)))?,
+            "bubbles" => e.rules.push(Rule::Bubbles(val.parse().map_err(|_| format!("строка {}: bubbles — нужно число", n + 1))?)),
             other => return Err(format!("строка {}: неизвестное правило «{other}»", n + 1)),
         }
     }
@@ -137,7 +146,7 @@ pub fn check(e: &Expect, f: &Found) -> Vec<Check> {
                 }
             }
             Rule::Absent(s) => {
-                let (score, block) = best_of(f.speech.iter().chain(f.labels.iter()), s);
+                let (score, block) = best_of(f.speech.iter().chain(f.labels.iter()).chain(f.bubbles.iter()), s);
                 Check {
                     ok: score < 0.9,
                     rule: format!("нет «{s}»"),
@@ -156,6 +165,19 @@ pub fn check(e: &Expect, f: &Found) -> Vec<Check> {
                 ok: f.speech.len() <= *n,
                 rule: format!("реплик не больше {n}"),
                 detail: format!("найдено {}", f.speech.len()),
+            },
+            Rule::Bubble(s) => {
+                let (score, block) = best_of(f.bubbles.iter(), s);
+                Check {
+                    ok: score >= HIT,
+                    rule: format!("пузырь содержит «{s}»"),
+                    detail: if block.is_empty() { "пузырей не найдено".into() } else { format!("лучшее совпадение {}: «{block}»", pct(score)) },
+                }
+            }
+            Rule::Bubbles(n) => Check {
+                ok: f.bubbles.len() == *n,
+                rule: format!("пузырей ровно {n}"),
+                detail: format!("найдено {}", f.bubbles.len()),
             },
         })
         .collect()
@@ -196,7 +218,14 @@ pub fn report(cases: &[CaseResult], title: &str) -> String {
         for ch in &c.checks {
             s.push_str(&format!("- {} {} — {}\n", if ch.ok { "✅" } else { "❌" }, ch.rule, ch.detail));
         }
-        s.push_str("\nНайденные реплики:\n");
+        s.push_str("\nНайденные пузыри (F8, по порядку чтения):\n");
+        if c.found.bubbles.is_empty() {
+            s.push_str("- (нет)\n");
+        }
+        for b in &c.found.bubbles {
+            s.push_str(&format!("- `{}`\n", b.replace('`', "'")));
+        }
+        s.push_str("\nНайденные реплики (режим субтитров):\n");
         if c.found.speech.is_empty() {
             s.push_str("- (нет)\n");
         }
@@ -220,6 +249,10 @@ pub fn draft(found: &Found, lang: Lang) -> String {
          lang\t{}\n",
         lang.code()
     );
+    for b in &found.bubbles {
+        s.push_str(&format!("bubble\t{}\n", b.chars().take(40).collect::<String>()));
+    }
+    s.push_str(&format!("bubbles\t{}\n", found.bubbles.len()));
     for b in &found.speech {
         let (sp, body) = text::split_speaker(b);
         if let Some(sp) = sp {
@@ -245,6 +278,7 @@ mod tests {
                 "You volunteered to come here?".into(),
             ],
             labels: vec!["Union Level".into(), "Events".into()],
+            bubbles: vec!["늦어서 미안해. 길이 너무 막혔어.".into(), "괜찮아.".into()],
         }
     }
 
@@ -257,6 +291,19 @@ mod tests {
         assert_eq!(e.rules.len(), 6);
         let r = check(&e, &found());
         assert!(r.iter().all(|c| c.ok), "{r:?}");
+    }
+
+    #[test]
+    fn bubble_rules() {
+        let e = parse("lang\tko\nbubble\t길이 너무 막혔어\nbubbles 2\nabsent\tChapter 12\n").unwrap();
+        assert_eq!(e.lang, Lang::Ko);
+        let r = check(&e, &found());
+        assert!(r.iter().all(|c| c.ok), "{r:?}");
+        let bad = parse("bubble\t집에 갈게\nbubbles 3\n").unwrap();
+        assert_eq!(check(&bad, &found()).iter().filter(|c| !c.ok).count(), 2);
+        let d = draft(&found(), Lang::Ko);
+        assert!(d.contains("bubbles\t2"), "{d}");
+        assert!(parse(&d).is_ok(), "{d}");
     }
 
     #[test]

@@ -1,52 +1,63 @@
 //! Bundled assets must parse and interact sensibly with the core.
 use wuxia_core::glossary::Glossary;
+use wuxia_core::lang::{self, Lang};
 use wuxia_core::prompt::{build, PromptInput, PromptStyle, TextKind};
 
-const GLOSSARY: &str = include_str!("../../../assets/glossary/wwm_wuxia_common.tsv");
-const BENCH: &str = include_str!("../../../assets/bench/wwm_lines.txt");
-
-#[test]
-fn glossary_parses() {
-    let mut g = Glossary::new();
-    let n = g.load_tsv(GLOSSARY);
-    assert!(n >= 50, "terms: {n}");
-    assert_eq!(n, g.len(), "duplicate source terms in bundled glossary");
-    assert_eq!(g.exact("开封").unwrap().dst, "Кайфэн");
+fn lines(text: &str) -> Vec<&str> {
+    text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).collect()
 }
 
-#[test]
-fn bench_lines_get_terms_and_prompts() {
+fn check(glossary: &str, bench: &str, lang: Lang, min_hits: usize) {
     let mut g = Glossary::new();
-    g.load_tsv(GLOSSARY);
-    let lines: Vec<&str> = BENCH.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).collect();
-    assert!(lines.len() >= 20);
-    let with_terms = lines.iter().filter(|l| !g.find_in(l, 24).is_empty()).count();
-    assert!(with_terms >= 10, "lines with glossary hits: {with_terms}");
-    for l in &lines {
-        assert_eq!(&wuxia_core::text::normalize_line(l), l, "bench line not normalized: {l}");
-        let inp = PromptInput { source: l, kind: TextKind::Dialogue, terms: g.find_in(l, 24), context_src: String::new(), context_pairs: String::new(), game: "WWM", style_hint: "" , speaker: None};
+    let n = g.load_tsv(glossary);
+    assert!(n >= 20, "{lang:?} glossary has {n} terms");
+    assert_eq!(n, g.len(), "duplicate source terms in the {lang:?} glossary");
+    let ls = lines(bench);
+    assert!(ls.len() >= 20, "{lang:?}: only {} test lines", ls.len());
+    let mut hits = 0;
+    for l in &ls {
+        assert_eq!(lang::detect(l), Some(lang), "{l}");
+        assert!(lang::is_label(l, lang), "not a bubble: {l}");
+        assert_eq!(&wuxia_core::text::normalize_for(l, lang), l, "test line not normalized: {l}");
+        let terms = g.find_in(l, 24);
+        if !terms.is_empty() {
+            hits += 1;
+        }
+        let inp = PromptInput { source: l, kind: TextKind::Dialogue, terms, context_src: String::new(), context_pairs: String::new(), game: "", style_hint: "", speaker: None };
         for s in [PromptStyle::HyMt, PromptStyle::Instruct] {
             assert!(build(s, &inp).last().unwrap().content.ends_with(l));
         }
     }
-    // Longest match: 燕云十六州 must win over 燕云.
-    let t: Vec<_> = g.find_in("燕云十六州，自古便是兵家必争之地。", 5).iter().map(|t| t.src.clone()).collect();
-    assert_eq!(t, vec!["燕云十六州"]);
+    assert!(hits >= min_hits, "{lang:?}: only {hits} test lines use glossary terms");
 }
 
 #[test]
-fn wuwa_glossary_and_english_lines() {
-    let mut g = wuxia_core::glossary::Glossary::new();
-    let n = g.load_tsv(include_str!("../../../assets/glossary/wuwa_terms.tsv"));
-    assert!(n > 50, "WuWa glossary has {n} terms");
-    let lines = include_str!("../../../assets/bench/wuwa_en_lines.txt");
-    let mut with_terms = 0;
-    for l in lines.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
-        assert_eq!(wuxia_core::lang::detect(l), Some(wuxia_core::lang::Lang::En), "{l}");
-        assert!(wuxia_core::lang::is_subtitle(l, wuxia_core::lang::Lang::En), "not a subtitle: {l}");
-        if !g.find_in(l, 8).is_empty() {
-            with_terms += 1;
-        }
+fn korean_assets() {
+    check(include_str!("../../../assets/glossary/40_manhwa_ko.tsv"), include_str!("../../../assets/bench/ko_lines.txt"), Lang::Ko, 5);
+}
+
+#[test]
+fn japanese_assets() {
+    check(include_str!("../../../assets/glossary/50_manga_ja.tsv"), include_str!("../../../assets/bench/ja_lines.txt"), Lang::Ja, 4);
+}
+
+#[test]
+fn chinese_assets() {
+    // Chinese lines are classical wuxia speech; the idiom glossary is small and optional.
+    let mut g = Glossary::new();
+    assert!(g.load_tsv(include_str!("../../../assets/glossary/10_chengyu.tsv")) >= 20);
+    for l in lines(include_str!("../../../assets/bench/zh_lines.txt")) {
+        assert_eq!(lang::detect(l), Some(Lang::Zh), "{l}");
+        assert_eq!(&wuxia_core::text::normalize_line(l), l, "bench line not normalized: {l}");
     }
-    assert!(with_terms >= 10, "only {with_terms} test lines use glossary terms");
+}
+
+#[test]
+fn glossaries_do_not_cross_languages() {
+    // A Korean term must never match Japanese text and the other way round.
+    let mut g = Glossary::new();
+    g.load_tsv(include_str!("../../../assets/glossary/40_manhwa_ko.tsv"));
+    for l in lines(include_str!("../../../assets/bench/ja_lines.txt")) {
+        assert!(g.find_in(l, 24).is_empty(), "{l}");
+    }
 }

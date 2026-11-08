@@ -469,7 +469,9 @@ impl Translator {
     /// Translate many interface labels in one request (see prompt::build_batch).
     /// Returns translations in the same order; each is cached. Errors if the
     /// answer cannot be split — the caller then falls back to one-by-one.
-    pub async fn translate_batch(&self, preset: &ModelPreset, game: &str, items: &[String]) -> Result<Vec<Option<String>>> {
+    /// Translate many texts of one screen in one request. `kind` = `Dialogue` for
+    /// the bubbles of a page (in reading order), `Interface` for unrelated signs.
+    pub async fn translate_batch(&self, preset: &ModelPreset, game: &str, items: &[String], kind: TextKind) -> Result<Vec<Option<String>>> {
         if items.is_empty() {
             return Ok(vec![]);
         }
@@ -489,10 +491,12 @@ impl Translator {
             }
             terms.truncate(40);
             let refs: Vec<&str> = items.iter().map(String::as_str).collect();
-            prompt::build_batch(PromptStyle::parse(&preset.prompt), &refs, &terms, game)
+            prompt::build_batch(PromptStyle::parse(&preset.prompt), &refs, &terms, game, kind)
         };
         let mut p = preset.clone();
-        p.max_tokens = 48 * items.len() as u32 + 64;
+        // Russian takes ~2–3 tokens per CJK character; bubbles are longer than labels.
+        let need: usize = items.iter().map(|s| s.chars().count() * 3 + 24).sum();
+        p.max_tokens = (need as u32 + 64).clamp(128, 3072);
         let _slot = self.gate.lock().await;
         let raw = self.client.chat(&messages, &p, |_| {}).await?;
         drop(_slot);
@@ -510,7 +514,7 @@ impl Translator {
             for (src, part) in items.iter().zip(parts) {
                 out.push(part.and_then(|part| match prompt::clean_output(&part, src) {
                     Ok(t) => {
-                        lines.push_str(&cache.insert(&[&preset.id, kind_tag(TextKind::Interface), src], &t));
+                        lines.push_str(&cache.insert(&[&preset.id, kind_tag(kind), src], &t));
                         Some(t)
                     }
                     Err(_) => None, // the caller retries this one alone
@@ -520,7 +524,7 @@ impl Translator {
         if !lines.is_empty() {
             append(&self.paths.cache(), &lines);
         }
-        tracing::info!(target: "translate", "[{}|ui-batch|{} мс] {}", preset.id, t0.elapsed().as_millis(), wuxia_core::text::count_ru(items.len(), "надпись", "надписи", "надписей"));
+        tracing::info!(target: "translate", "[{}|batch|{} мс] {}", preset.id, t0.elapsed().as_millis(), wuxia_core::text::count_ru(items.len(), "текст", "текста", "текстов"));
         Ok(out.into_iter().map(|t| t.map(|t| self.fix_ru(&t))).collect())
     }
 }

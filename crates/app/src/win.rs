@@ -136,14 +136,15 @@ pub fn foreground_class() -> String {
     }
 }
 
-/// Window classes that are never the game even if the title mentions it
-/// (a browser tab "Wuthering Waves guide", Explorer folder, this chat, a video…).
-/// Chromium and Electron apps (Chrome, Edge, Yandex, Discord, VS Code, Claude) share
-/// `Chrome_WidgetWin_*`; Telegram and OBS are Qt.
-pub const NOT_GAME_CLASSES: &[&str] = &[
-    "Chrome_WidgetWin", "MozillaWindowClass", "CabinetWClass", "ExploreWClass", "Notepad", "Qt", "ApplicationFrameWindow",
-    "ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "TaskManagerWindow", "SDL_app",
-];
+/// Window classes that are never the reader even if the title matches
+/// (Explorer folder, Notepad, a console, Task Manager). Browsers are allowed:
+/// that is where manga is read.
+pub const NOT_GAME_CLASSES: &[&str] = &["CabinetWClass", "ExploreWClass", "Notepad", "ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "TaskManagerWindow"];
+
+/// Does a window class match the profile's class prefixes (`A|B`)?
+fn class_matches(class: &str, class_hint: &str) -> bool {
+    class_hint.split('|').map(str::trim).filter(|c| !c.is_empty()).any(|c| class.starts_with(c))
+}
 
 /// Is the foreground window the game? `window_match` holds title parts separated
 /// by `|`; `class_hint` (e.g. "UnrealWindow") also identifies it. Every change of
@@ -156,7 +157,7 @@ pub fn game_in_foreground(window_match: &str, class_hint: &str) -> bool {
     let result = if NOT_GAME_CLASSES.iter().any(|c| class.starts_with(c)) {
         false
     } else {
-        (!class_hint.is_empty() && class == class_hint)
+        class_matches(&class, class_hint)
             || window_match.split('|').map(str::trim).filter(|m| !m.is_empty()).any(|m| title.contains(&m.to_lowercase()))
     };
     let key = format!("{title_raw}\u{1}{class}");
@@ -165,7 +166,7 @@ pub fn game_in_foreground(window_match: &str, class_hint: &str) -> bool {
         let (topmost, full) = foreground_geometry();
         tracing::info!(
             "активное окно: «{title_raw}» [{class}] → {} (поверх всех: {}, на весь экран: {}, эксклюзивный полноэкранный: {})",
-            if result { "игра" } else { "не игра" },
+            if result { "читалка" } else { "другое окно" },
             yes_no(topmost),
             yes_no(full),
             yes_no(exclusive_fullscreen())
@@ -211,7 +212,7 @@ pub fn find_game_window(window_match: &str, class_hint: &str) -> Option<GameWind
             continue;
         }
         let low = title.to_lowercase();
-        if (!class_hint.is_empty() && class == class_hint) || matches.iter().any(|m| low.contains(m.as_str())) {
+        if class_matches(&class, class_hint) || matches.iter().any(|m| low.contains(m.as_str())) {
             let mut r = RECT::default();
             let (rect, topmost, minimized) = unsafe {
                 let _ = GetWindowRect(h, &mut r);

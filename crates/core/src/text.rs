@@ -1,4 +1,4 @@
-//! OCR text cleanup and normalization for Chinese and English game text.
+//! OCR text cleanup and normalization for Chinese, Japanese, Korean and English text.
 
 use crate::lang::Lang;
 
@@ -8,14 +8,34 @@ pub fn is_han(c: char) -> bool {
         0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF | 0x20000..=0x2A6DF)
 }
 
+/// Japanese hiragana, katakana (incl. the long mark ー) and half-width katakana.
+pub fn is_kana(c: char) -> bool {
+    matches!(c as u32, 0x3041..=0x309F | 0x30A0..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F)
+}
+
+/// Korean Hangul syllables and jamo.
+pub fn is_hangul(c: char) -> bool {
+    matches!(c as u32, 0xAC00..=0xD7A3 | 0x1100..=0x11FF | 0x3130..=0x318F)
+}
+
+pub fn kana_count(s: &str) -> usize {
+    s.chars().filter(|&c| is_kana(c)).count()
+}
+
+pub fn hangul_count(s: &str) -> usize {
+    s.chars().filter(|&c| is_hangul(c)).count()
+}
+
 /// Chinese/full-width punctuation that should hug neighbouring ideographs.
 pub fn is_cjk_punct(c: char) -> bool {
     matches!(c as u32, 0x3000..=0x303F | 0xFF00..=0xFF0F | 0xFF1A..=0xFF20 | 0xFF3B..=0xFF40 | 0xFF5B..=0xFF65)
         || matches!(c, '…' | '—' | '“' | '”' | '‘' | '’' | '·')
 }
 
+/// Characters written without spaces between them (Chinese, Japanese): the
+/// spaces Windows OCR puts between them are dropped.
 fn is_cjkish(c: char) -> bool {
-    is_han(c) || is_cjk_punct(c)
+    is_han(c) || is_kana(c) || is_cjk_punct(c)
 }
 
 pub fn has_han(s: &str) -> bool {
@@ -176,11 +196,40 @@ fn fix_digits_in_words(s: &str) -> String {
     out
 }
 
+/// Normalize one OCR line of Korean: words are separated by spaces (keep one),
+/// punctuation hugs the word before it, box borders are trimmed. Unlike English
+/// no digit→letter fixes: Hangul counts as "alphabetic" for Rust.
+pub fn normalize_line_ko(raw: &str) -> String {
+    let s: String = raw
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| match c {
+            '‘' | '’' | '`' | '´' => '\'',
+            '“' | '”' | '„' => '"',
+            c => c,
+        })
+        .collect();
+    let mut s = s.split_whitespace().collect::<Vec<_>>().join(" ").replace("...", "…");
+    for p in [" ,", " .", " !", " ?", " ;", " :", " …", " ~"] {
+        while s.contains(p) {
+            s = s.replace(p, &p[1..]);
+        }
+    }
+    let junk = |c: char| matches!(c, '|' | '_' | '=' | '+' | '*' | '^' | '¦' | '丨' | '•' | '·') || c.is_whitespace();
+    s.trim_matches(junk).trim_start_matches(|c: char| c == '-' || c == '—').trim_start().to_string()
+}
+
+/// Join Korean lines of one bubble: a line break in a bubble falls between words.
+pub fn join_lines_ko<S: AsRef<str>>(lines: &[S]) -> String {
+    lines.iter().map(|l| normalize_line_ko(l.as_ref())).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
 /// Normalize for the given source language.
 pub fn normalize_for(raw: &str, lang: Lang) -> String {
     match lang {
-        Lang::Zh => normalize_line(raw),
+        Lang::Zh | Lang::Ja => normalize_line(raw),
         Lang::En => normalize_line_en(raw),
+        Lang::Ko => normalize_line_ko(raw),
     }
 }
 
@@ -212,8 +261,9 @@ pub fn join_lines_en<S: AsRef<str>>(lines: &[S]) -> String {
 
 pub fn join_lines_for<S: AsRef<str>>(lines: &[S], lang: Lang) -> String {
     match lang {
-        Lang::Zh => join_lines(lines),
+        Lang::Zh | Lang::Ja => join_lines(lines),
         Lang::En => join_lines_en(lines),
+        Lang::Ko => join_lines_ko(lines),
     }
 }
 
@@ -295,7 +345,7 @@ pub fn trim_trailing_garbage(s: &str) -> String {
     if let Some((idx, ch)) = s.char_indices().filter(|(_, c)| finals.contains(c)).last() {
         let tail = &s[idx + ch.len_utf8()..];
         let n = tail.chars().count();
-        if n > 0 && n <= 3 && !tail.chars().any(is_han) {
+        if n > 0 && n <= 3 && !tail.chars().any(|c| is_han(c) || is_kana(c)) {
             return s[..idx + ch.len_utf8()].to_string();
         }
     }
@@ -423,6 +473,18 @@ mod tests {
     fn joins_two_line_subtitle() {
         assert_eq!(join_lines(&["此去开封", "路途遥远"]), "此去开封路途遥远");
         assert_eq!(join_lines(&["Press", "F to talk"]), "Press F to talk");
+    }
+
+    #[test]
+    fn japanese_and_korean_lines() {
+        // Windows OCR puts a space between every Japanese character.
+        assert_eq!(normalize_for("ち ょ っ と 待 っ て ！", Lang::Ja), "ちょっと待って！");
+        assert_eq!(join_lines_for(&["そ れ は", "ダ メ だ よ 。"], Lang::Ja), "それはダメだよ。");
+        // Kana after the last full stop is speech, not garbage.
+        assert_eq!(join_lines_for(&["行くぞ。", "うん"], Lang::Ja), "行くぞ。うん");
+        assert_eq!(normalize_for("  뭐야 ,  벌써   왔어 ? ", Lang::Ko), "뭐야, 벌써 왔어?");
+        assert_eq!(normalize_for("| 오늘은 10시에 ... |", Lang::Ko), "오늘은 10시에…");
+        assert_eq!(join_lines_for(&["오늘은 집에", "일찍 갈게."], Lang::Ko), "오늘은 집에 일찍 갈게.");
     }
 
     #[test]

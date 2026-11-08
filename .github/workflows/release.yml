@@ -83,12 +83,14 @@ jobs:
           Copy-Item -Recurse assets/bench dist/bench
           Copy-Item README.md, LICENSE dist/
 
-      - name: Windows OCR for English (for the screenshot tests)
+      - name: Windows OCR for Korean and Japanese (for the screenshot tests)
         shell: pwsh
         continue-on-error: true
         run: |
-          Get-WindowsCapability -Online -Name "Language.OCR*en-US*" | Format-Table Name, State
-          Get-WindowsCapability -Online -Name "Language.OCR*en-US*" | Where-Object State -ne Installed | Add-WindowsCapability -Online
+          foreach ($l in 'ko-KR', 'ja-JP') {
+            Get-WindowsCapability -Online -Name "Language.OCR*$l*" | Format-Table Name, State
+            Get-WindowsCapability -Online -Name "Language.OCR*$l*" | Where-Object State -ne Installed | Add-WindowsCapability -Online
+          }
 
       - name: Screenshot tests (real Windows OCR on tests/screens)
         shell: pwsh

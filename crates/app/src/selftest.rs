@@ -6,7 +6,7 @@
 //!   `<name>.expect` (see `wuxia_core::selftest`). Writes a Markdown report
 //!   (also to the GitHub Actions summary when run in CI). Exit code: 0 — all
 //!   passed, 1 — some failed, 2 — Windows OCR is not available here.
-//! * Ctrl+F9 in the game (Command::SaveCase) — saves the screen as a new case
+//! * Ctrl+F9 on a page (Command::SaveCase) — saves the screen as a new case
 //!   with a draft `.expect` built from what was found, so a bad situation can
 //!   be sent to the developer and turned into a test.
 
@@ -69,8 +69,8 @@ pub fn save_png(frame: &Frame, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Run the real pipeline on one picture: what the auto mode would translate and
-/// what F8 would. Returns (found, OCR time in ms).
+/// Run the real pipeline on one picture: the bubbles F8 would translate (and,
+/// for the old subtitle mode, its speech blocks). Returns (found, OCR time in ms).
 pub async fn analyse(frame: &Frame, lang: Lang, ocr: &Ocr, tr: &Translator) -> Result<(Found, u128)> {
     let t0 = Instant::now();
     let lines = ocr.recognize(frame.clone(), 1, lang).await?;
@@ -78,6 +78,7 @@ pub async fn analyse(frame: &Frame, lang: Lang, ocr: &Ocr, tr: &Translator) -> R
     let speech = crate::auto::speech_blocks(&lines, lang, tr).into_iter().map(|(t, _)| t).collect();
     let up = crate::interface::upscale_for(0, frame.height as i32);
     let label_lines = if up == 1 { lines } else { ocr.recognize(frame.clone(), up, lang).await? };
+    let bubbles = crate::interface::bubbles(&label_lines, lang, tr, frame).into_iter().map(|b| b.src).collect();
     let mut labels: Vec<String> = Vec::new();
     for l in label_lines {
         if crate::interface::is_label_line(&l.text, lang, tr) {
@@ -87,7 +88,7 @@ pub async fn analyse(frame: &Frame, lang: Lang, ocr: &Ocr, tr: &Translator) -> R
             }
         }
     }
-    Ok((Found { speech, labels }, ms))
+    Ok((Found { speech, labels, bubbles }, ms))
 }
 
 fn arg_after(args: &[String], key: &str) -> Option<String> {
@@ -116,7 +117,7 @@ fn run(dir: &Path) -> Result<(i32, String)> {
     let paths = Paths::detect()?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let client = crate::llm::client::LlmClient::new("http://127.0.0.1:9", 5);
-    let tr = Translator::new(paths, client, 0, "wuwa");
+    let tr = Translator::new(paths, client, 0, "browser");
     let ocr = Ocr::spawn()?;
 
     let mut pngs: Vec<PathBuf> = std::fs::read_dir(dir)

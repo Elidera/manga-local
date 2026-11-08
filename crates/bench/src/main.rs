@@ -3,7 +3,7 @@
 //!
 //! Usage:
 //!   manga-bench --server http://127.0.0.1:8848 --name "Hy-MT2 1.8B" --prompt hymt \
-//!               --lines assets/bench/wwm_lines.txt --glossary assets/glossary \
+//!               --lines assets/bench/ko_lines.txt --glossary assets/glossary \
 //!               [--temp 0.7 --top-p 0.6 --top-k 20 --repeat 1.05 --no-think] [--out report.md]
 
 use serde_json::{json, Value};
@@ -35,7 +35,7 @@ fn parse_args() -> Args {
         server: "http://127.0.0.1:8848".into(),
         name: "model".into(),
         prompt: "hymt".into(),
-        lines: "assets/bench/wwm_lines.txt".into(),
+        lines: "assets/bench/ko_lines.txt".into(),
         glossary: "assets/glossary".into(),
         temp: 0.7,
         top_p: 0.6,
@@ -44,8 +44,8 @@ fn parse_args() -> Args {
         no_think: false,
         batch: false,
         out: None,
-        game: "Where Winds Meet (燕云十六声)".into(),
-        profile: "wwm".into(),
+        game: String::new(),
+        profile: "browser".into(),
     };
     let v: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -84,9 +84,9 @@ fn parse_args() -> Args {
     a
 }
 
-/// Same rule as the app: `<profile>_*.tsv` only for that game.
+/// Same rule as the app: `<profile>_*.tsv` only for that profile.
 fn load_glossary(dir: &str, profile: &str) -> Glossary {
-    const PROFILES: &[&str] = &["wuwa", "wwm", "custom"];
+    const PROFILES: &[&str] = &["browser", "screen", "custom"];
     let mut g = Glossary::new();
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .map(|rd| {
@@ -140,14 +140,14 @@ fn md_escape(s: &str) -> String {
     s.replace('|', "\\|").replace('\n', " ")
 }
 
-/// Interface mode check: labels in batches of 20 exactly like the app, with
-/// per-label fallback when the batch answer cannot be split.
+/// Page check: lines in batches of 12 as the bubbles of one page, exactly like
+/// the app's F8, with per-bubble fallback when the batch answer cannot be split.
 fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
     let style = PromptStyle::parse(&a.prompt);
-    let mut report = format!("## {} — интерфейс (пакетами по 20)\n\n| Надпись | Перевод | способ |\n|---|---|---|\n", a.name);
+    let mut report = format!("## {} — страница (пакетами по 12 пузырей)\n\n| Пузырь | Перевод | способ |\n|---|---|---|\n", a.name);
     let (mut batches, mut batch_ok) = (0, 0);
     let t_all = Instant::now();
-    for chunk in lines.chunks(20) {
+    for chunk in lines.chunks(12) {
         batches += 1;
         let mut terms: Vec<&wuxia_core::glossary::Term> = Vec::new();
         for l in chunk {
@@ -157,8 +157,9 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
                 }
             }
         }
-        let msgs = prompt::build_batch(style, chunk, &terms, &a.game);
-        let parts = chat_n(agent, a, &msgs, 48 * chunk.len() as u32 + 64)
+        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue);
+        let need: usize = chunk.iter().map(|s| s.chars().count() * 3 + 24).sum();
+        let parts = chat_n(agent, a, &msgs, (need as u32 + 64).clamp(128, 3072))
             .map(|raw| {
                 let p = prompt::parse_batch_indexed(&raw, chunk.len());
                 if p.iter().any(Option::is_none) {
@@ -177,7 +178,7 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
             }
             let inp = PromptInput {
                 source: l,
-                kind: TextKind::Interface,
+                kind: TextKind::Dialogue,
                 terms: g.find_in(l, 24),
                 context_src: String::new(),
                 context_pairs: String::new(),
@@ -192,7 +193,7 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
         }
     }
     report.push_str(&format!(
-        "\n**Итог:** пакетов {batch_ok}/{batches} разобрано полностью, всего {} мс на {} надписей.\n\n",
+        "\n**Итог:** пакетов {batch_ok}/{batches} разобрано полностью, всего {} мс на {} пузырей.\n\n",
         t_all.elapsed().as_millis(),
         lines.len()
     ));

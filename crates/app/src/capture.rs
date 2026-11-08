@@ -34,14 +34,12 @@ impl PxRect {
     }
 }
 
-/// What to read: the game window's picture when the game is in front (no
-/// taskbar, no other windows, no desktop around a windowed game), otherwise the
-/// whole primary screen.
+/// What to read: the reader window's picture when it is in front (no taskbar,
+/// no other windows), otherwise the whole primary screen.
 pub fn game_area(cfg: &crate::config::Config) -> PxRect {
     let (sw, sh) = crate::win::screen_size();
     let full = PxRect { x: 0, y: 0, w: sw, h: sh };
-    let g = &cfg.general;
-    if g.window_match.trim().is_empty() || !crate::win::game_in_foreground(&g.window_match, crate::config::profile(&g.profile).window_class) {
+    if !cfg.watches_window() || !cfg.window_in_front() {
         return full;
     }
     crate::win::foreground_client_rect().map_or(full, |(x, y, w, h)| PxRect { x, y, w, h })

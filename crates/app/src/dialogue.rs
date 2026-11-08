@@ -60,12 +60,12 @@ pub async fn run(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
         // Translate only while the game itself is in front: otherwise the whole-screen
         // reader picks up browser tabs, the taskbar and our own panel (seen in logs).
         // A "custom" game without a window title to match is always active.
-        let pause_on = !cfg.general.window_match.trim().is_empty();
+        let pause_on = cfg.watches_window();
         if !pause_on && shared.ui.lock().unwrap().paused_unfocused {
             shared.ui(|u| u.paused_unfocused = false);
         }
         if pause_on {
-            let focused = win::game_in_foreground(&cfg.general.window_match, crate::config::profile(&cfg.general.profile).window_class);
+            let focused = cfg.window_in_front();
             let was = shared.ui.lock().unwrap().paused_unfocused;
             if focused == was {
                 shared.ui(|u| u.paused_unfocused = !focused);

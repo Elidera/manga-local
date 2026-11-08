@@ -1,7 +1,7 @@
 //! Windows OCR (Windows.Media.Ocr) on a dedicated COM/WinRT thread.
 //!
-//! MVP engine: built into Windows 10/11, no extra download besides the Chinese
-//! language OCR component, returns per-word boxes. PaddleOCR via ONNX Runtime
+//! MVP engine: built into Windows 10/11, no extra download besides the OCR
+//! language components (Korean, Japanese, Chinese), returns per-word boxes. PaddleOCR via ONNX Runtime
 //! is planned behind the same `OcrLine` interface.
 
 use anyhow::{anyhow, Context, Result};
@@ -156,6 +156,8 @@ fn create_engine(lang: Lang) -> Result<OcrEngine> {
     let tags: &[&str] = match lang {
         Lang::Zh => &["zh-Hans-CN", "zh-CN", "zh-Hans"],
         Lang::En => &["en-US", "en-GB", "en"],
+        Lang::Ko => &["ko-KR", "ko"],
+        Lang::Ja => &["ja-JP", "ja"],
     };
     for t in tags {
         let l = Language::CreateLanguage(&HSTRING::from(*t)).context("неверный код языка OCR")?;
@@ -167,6 +169,8 @@ fn create_engine(lang: Lang) -> Result<OcrEngine> {
     let (what, add) = match lang {
         Lang::Zh => ("китайского", "«中文(中华人民共和国)»"),
         Lang::En => ("английского", "«English (United States)»"),
+        Lang::Ko => ("корейского", "«한국어»"),
+        Lang::Ja => ("японского", "«日本語»"),
     };
     Err(anyhow!(
         "Windows OCR для {what} не установлен. Переустановите Manga Local с галочкой «модуль распознавания» \

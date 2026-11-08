@@ -199,6 +199,8 @@ pub fn speech_blocks(lines: &[ocr::OcrLine], lang: lang::Lang, tr: &Translator) 
             let ok = gap >= -2.0 && gap < 2.5 * line_h && centred && match lang {
                 lang::Lang::En => text::looks_like_speaker_en(name) && name.split_whitespace().count() <= 3,
                 lang::Lang::Zh => (1..=6).contains(&text::han_count(name)) && text::han_ratio(name) > 0.8,
+                // Manga has no speaker names above the bubbles.
+                lang::Lang::Ko | lang::Lang::Ja => false,
             };
             ok.then(|| name.to_string())
         });

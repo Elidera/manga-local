@@ -19,15 +19,16 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct General {
-    /// Game profile id (see [`PROFILES`]): "wuwa", "wwm" or "custom".
-    /// For a known profile `game_title` and `window_match` are filled from it.
+    /// Where the manga is read (see [`PROFILES`]): "browser", "screen" or "custom".
+    /// For a known profile `window_match` is filled from it.
     pub profile: String,
-    /// Language of the game text: "en" or "zh".
+    /// Language of the text: "ko", "ja", "zh" (or "en").
     pub source_lang: String,
-    /// Shown to instruct models in the prompt.
+    /// Title of the manga, shown to instruct models in the prompt (may be empty).
     pub game_title: String,
-    /// Substrings of the game window title separated by `|`. Capture pauses while
-    /// another window is in the foreground. Empty = always active.
+    /// Substrings of the reader window title separated by `|`. Capture pauses while
+    /// another window is in the foreground. Empty (and no window class in the
+    /// profile) = the whole screen, always active.
     pub window_match: String,
     /// Kept for old config files; translation now always waits for the game window.
     pub pause_when_unfocused: bool,
@@ -204,10 +205,10 @@ impl Default for Config {
 impl Default for General {
     fn default() -> Self {
         Self {
-            profile: "wuwa".into(),
-            source_lang: "en".into(),
-            game_title: "Wuthering Waves".into(),
-            window_match: "Wuthering Waves|鸣潮".into(),
+            profile: "browser".into(),
+            source_lang: "ko".into(),
+            game_title: String::new(),
+            window_match: String::new(),
             pause_when_unfocused: true,
             visible_in_screenshots: false,
             tray_hint_shown: false,
@@ -215,28 +216,33 @@ impl Default for General {
     }
 }
 
-/// A supported game: how to recognise its window and which dictionaries to load
-/// (glossary files named `<id>_*.tsv` are loaded only for that profile).
+/// Where the manga is read: how to recognise that window and which
+/// dictionaries to load (glossary files named `<id>_*.tsv` are loaded only for
+/// that profile).
 pub struct GameProfile {
     pub id: &'static str,
     pub name: &'static str,
     pub title: &'static str,
     pub window_match: &'static str,
-    /// Text languages the game offers that we can translate, the first is the default.
+    /// Languages offered for this profile, the first is the default.
     pub langs: &'static [&'static str],
-    /// Window class of the game, if known (Unreal Engine games: "UnrealWindow").
-    /// Used when the window title does not match (other client or language).
+    /// Window classes (prefixes, separated by `|`) of the reader window.
+    /// Chromium browsers (Chrome, Edge, Yandex, Opera, Brave) are
+    /// `Chrome_WidgetWin_1`, Firefox is `MozillaWindowClass`.
     pub window_class: &'static str,
 }
 
+/// Languages in the order the user reads them most: Korean and Japanese first.
+pub const LANGS: &[&str] = &["ko", "ja", "zh", "en"];
+
 pub const PROFILES: &[GameProfile] = &[
-    GameProfile { id: "wuwa", name: "Wuthering Waves", title: "Wuthering Waves", window_match: "Wuthering Waves|鸣潮", langs: &["en", "zh"], window_class: "UnrealWindow" },
-    GameProfile { id: "wwm", name: "Where Winds Meet", title: "Where Winds Meet (燕云十六声)", window_match: "Where Winds Meet|燕云十六声", langs: &["zh", "en"], window_class: "" },
-    GameProfile { id: "custom", name: "Другая игра", title: "", window_match: "", langs: &["en", "zh"], window_class: "" },
+    GameProfile { id: "browser", name: "Браузер (манга на сайтах)", title: "", window_match: "", langs: LANGS, window_class: "Chrome_WidgetWin|MozillaWindowClass" },
+    GameProfile { id: "screen", name: "Весь экран (любая программа)", title: "", window_match: "", langs: LANGS, window_class: "" },
+    GameProfile { id: "custom", name: "Своя программа (по заголовку окна)", title: "", window_match: "", langs: LANGS, window_class: "" },
 ];
 
 pub fn profile(id: &str) -> &'static GameProfile {
-    PROFILES.iter().find(|p| p.id == id).unwrap_or(&PROFILES[PROFILES.len() - 1])
+    PROFILES.iter().find(|p| p.id == id).unwrap_or(&PROFILES[0])
 }
 
 impl Default for Llm {
@@ -307,7 +313,7 @@ pub fn default_models() -> Vec<ModelPreset> {
 impl Default for Dialogue {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             mode: "auto".into(),
             auto_interval_ms: 500,
             region: [0.18, 0.80, 0.64, 0.12],
@@ -351,10 +357,10 @@ impl Default for Ocr {
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
-            toggle_dialogue: "F7".into(),
+            toggle_dialogue: String::new(),
             screen_translate: "F8".into(),
             show_original: "F9".into(),
-            select_region: "Ctrl+F7".into(),
+            select_region: String::new(),
             panel: "F10".into(),
             save_case: "Ctrl+F9".into(),
             freeze: "Ctrl+F8".into(),
@@ -396,16 +402,27 @@ impl Config {
         Ok(())
     }
 
-    /// Fill game title / window match from a known profile ("custom" keeps the user's values).
+    /// Fill the window match from a known profile ("custom" keeps the user's values).
     pub fn apply_profile(&mut self) {
         let p = profile(&self.general.profile);
+        self.general.profile = p.id.into();
         if p.id != "custom" {
-            self.general.game_title = p.title.into();
             self.general.window_match = p.window_match.into();
         }
-        if self.general.source_lang != "en" && self.general.source_lang != "zh" {
+        if !p.langs.contains(&self.general.source_lang.as_str()) {
             self.general.source_lang = p.langs[0].into();
         }
+    }
+
+    /// Does the profile follow one window (browser, a named program)? Otherwise
+    /// the whole screen is read all the time.
+    pub fn watches_window(&self) -> bool {
+        !self.general.window_match.trim().is_empty() || !profile(&self.general.profile).window_class.is_empty()
+    }
+
+    /// Is the reader window in front?
+    pub fn window_in_front(&self) -> bool {
+        crate::win::game_in_foreground(&self.general.window_match, profile(&self.general.profile).window_class)
     }
 
     pub fn source_lang(&self) -> wuxia_core::lang::Lang {

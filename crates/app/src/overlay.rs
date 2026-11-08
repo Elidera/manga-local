@@ -66,8 +66,10 @@ struct Look {
 enum El {
     /// A translation plate next to the original text (x, y, w, h in screen px).
     Plate { anchor: [f32; 4], speaker: Option<String>, body: String, dim: bool, size_pt: f32, position: String, opacity: f32, look: Look },
-    /// Interface Mode: Russian label painted over the original one.
-    Label { rect: [f32; 4], text: String, bg: [u8; 3], fg: [u8; 3], plate: bool, font_scale: f32 },
+    /// Page translation: Russian text painted over the original one — a single
+    /// line label, or a speech bubble with the text wrapped inside (`lines` ≥ 2
+    /// or text too long for one line). `line_h` = original line height, px.
+    Label { rect: [f32; 4], text: String, bg: [u8; 3], fg: [u8; 3], plate: bool, font_scale: f32, line_h: f32, lines: usize },
     /// Interface Mode "list": all labels in one box on the right.
     List { text: String },
     /// «Своё окно»: all current lines inside the user's box (speaker, text, still translating).
@@ -138,6 +140,8 @@ fn scene(u: &UiState, cfg: &Config, screen: (f32, f32), scale: f32) -> Vec<El> {
                         fg: it.fg,
                         plate: it.busy || cfg.interface.mode == "backdrop",
                         font_scale: cfg.interface.font_scale,
+                        line_h: it.line_h,
+                        lines: it.lines,
                     });
                 }
             }
@@ -188,7 +192,7 @@ fn scene(u: &UiState, cfg: &Config, screen: (f32, f32), scale: f32) -> Vec<El> {
         let left = t.saturating_duration_since(Instant::now());
         if !left.is_zero() {
             out.push(El::Badge {
-                text: format!("Manga Local: надпись поверх игры видна  ({} с)", left.as_secs() + 1),
+                text: format!("Manga Local: надпись поверх окон видна  ({} с)", left.as_secs() + 1),
                 corner: Corner::Center,
                 size_pt: 30.0,
             });
@@ -365,7 +369,40 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
             op.extra_color = Rgba(232, 184, 92, 255);
             Some(op)
         }
-        El::Label { rect, text, bg, fg, plate, font_scale } => {
+        El::Label { rect, text, bg, fg, plate, font_scale, line_h, lines } if *lines >= 2 || {
+            // A one-line label whose translation does not fit on one line is
+            // wrapped like a bubble too.
+            let px = (rect[3] * font_scale).clamp(9.0 * s, 64.0 * s);
+            g.measure(text, px as i32, false, LINE, 10_000).0 as f32 > rect[2] * 1.6 + 8.0 * s
+        } =>
+        {
+            let [x, y, w, h] = *rect;
+            let lh = if *line_h > 0.0 { *line_h } else { h };
+            let pad = (lh * 0.18).clamp(2.0 * s, 10.0 * s);
+            // Russian is longer: a narrow bubble («응», «え?») may grow sideways a bit.
+            let box_w = (w.max(lh * 3.5) + pad) as i32;
+            let max_h = (h + pad) as i32;
+            let start = (lh * font_scale).clamp(9.0 * s, 64.0 * s) as i32;
+            let min = ((start as f32 * 0.45).max(9.0 * s)) as i32;
+            let px = wuxia_core::layout::fit_font(start, min, max_h, |px| {
+                let (tw, th) = g.measure(text, px, false, PARA, box_w);
+                (tw, if tw > box_w + 2 { i32::MAX } else { th })
+            });
+            let (tw, th) = g.measure(text, px, false, PARA, box_w);
+            let tw = tw.max(1);
+            let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+            let cw = (w.max(tw as f32) + 2.0 * pad) as i32;
+            let ch = (h.max(th as f32) + 2.0 * pad) as i32;
+            let cover = [cx as i32 - cw / 2, cy as i32 - ch / 2, cw, ch];
+            let (fill, color, radius) = if *plate {
+                (Rgba(12, 12, 14, 230), Rgba(245, 240, 225, 255), 6.0 * s)
+            } else {
+                (Rgba(bg[0], bg[1], bg[2], 255), Rgba(fg[0], fg[1], fg[2], 255), (lh * 0.5).min(16.0 * s))
+            };
+            let job = TextJob { text: text.clone(), px, bold: false, flags: PARA, x: cx as i32 - tw / 2, y: cy as i32 - th / 2, w: tw + 2, h: th, color, outline: None };
+            Some(Op::new(cover, fill, radius, vec![job]))
+        }
+        El::Label { rect, text, bg, fg, plate, font_scale, .. } => {
             let [x, y, w, h] = *rect;
             let mut px = (h * font_scale).clamp(9.0 * s, 64.0 * s);
             let (mut tw, mut th) = g.measure(text, px as i32, false, LINE, 10_000);

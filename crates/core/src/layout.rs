@@ -43,6 +43,65 @@ pub fn block_rect(lines: &[Rect], idx: &[usize]) -> Rect {
     r
 }
 
+/// Order blocks the way a reader goes through a page: top to bottom, and
+/// within one row left to right (Korean webtoons, Chinese manhua) or right to
+/// left (Japanese manga, `rtl`). Two blocks are in one row when their vertical
+/// spans overlap by at least half of the shorter one.
+pub fn reading_order(rects: &[Rect], rtl: bool) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rects.len()).collect();
+    order.sort_by(|&a, &b| rects[a].y.partial_cmp(&rects[b].y).unwrap_or(std::cmp::Ordering::Equal));
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    for i in order {
+        let r = &rects[i];
+        let joined = rows.last_mut().filter(|row| {
+            row.iter().any(|&j| {
+                let o = &rects[j];
+                let overlap = (r.y + r.h).min(o.y + o.h) - r.y.max(o.y);
+                overlap >= 0.5 * r.h.min(o.h)
+            })
+        });
+        match joined {
+            Some(row) => row.push(i),
+            None => rows.push(vec![i]),
+        }
+    }
+    let mut out = Vec::with_capacity(rects.len());
+    for mut row in rows {
+        row.sort_by(|&a, &b| {
+            let (xa, xb) = (rects[a].x + rects[a].w / 2.0, rects[b].x + rects[b].w / 2.0);
+            let o = xa.partial_cmp(&xb).unwrap_or(std::cmp::Ordering::Equal);
+            if rtl {
+                o.reverse()
+            } else {
+                o
+            }
+        });
+        out.extend(row);
+    }
+    out
+}
+
+/// The largest font size (px) in `min_px..=start_px` at which `measure(px)`
+/// (text width and height when wrapped to the bubble width) fits `max_h`.
+/// Returns `min_px` when even that does not fit: the caller then lets the text
+/// grow past the bubble.
+pub fn fit_font(start_px: i32, min_px: i32, max_h: i32, mut measure: impl FnMut(i32) -> (i32, i32)) -> i32 {
+    let (mut lo, mut hi) = (min_px.max(1), start_px.max(min_px.max(1)));
+    if measure(hi).1 <= max_h {
+        return hi;
+    }
+    // Binary search on the largest size that fits.
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        if measure(mid).1 <= max_h {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    lo
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +124,29 @@ mod tests {
         assert!(g.contains(&vec![0, 1, 2]));
         let b = block_rect(&lines, &[0, 1, 2]);
         assert_eq!((b.y, b.y + b.h), (1150.0, 1266.0));
+    }
+
+    #[test]
+    fn reading_order_rows() {
+        // Two bubbles side by side, one below.
+        let rects = [r(600.0, 100.0, 200.0, 80.0), r(100.0, 110.0, 200.0, 60.0), r(300.0, 400.0, 200.0, 60.0)];
+        assert_eq!(reading_order(&rects, false), vec![1, 0, 2]);
+        assert_eq!(reading_order(&rects, true), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn font_fits_bubble() {
+        // Fake measure: text of 100 chars, char width = px/2, wrapped at 200 px.
+        let measure = |px: i32| {
+            let per_line = (200 / (px / 2).max(1)).max(1);
+            let lines = (100 + per_line - 1) / per_line;
+            (200, lines * px)
+        };
+        let px = fit_font(40, 8, 150, measure);
+        assert!(measure(px).1 <= 150);
+        assert!(measure(px + 1).1 > 150);
+        assert_eq!(fit_font(12, 8, 1000, measure), 12);
+        assert_eq!(fit_font(40, 30, 10, measure), 30);
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub enum Mood {
     Idle,
     /// A translation or the model download is in progress.
     Working,
-    /// Dialogue translation is off or the game is not in front.
+    /// The reader window is not in front.
     Sleeping,
     /// Something needs the user's attention.
     Error,
@@ -27,9 +27,9 @@ pub enum Mood {
 impl Mood {
     pub fn phrase(self) -> &'static str {
         match self {
-            Mood::Idle => "Жду субтитров! Переведу всё, что появится в игре.",
+            Mood::Idle => "Открой мангу и нажми F8 — переведу все пузыри!",
             Mood::Working => "Перевожу, перевожу…",
-            Mood::Sleeping => "Сплю, пока игра не активна. Разбудите меня клавишей F7 или вернитесь в игру.",
+            Mood::Sleeping => "Сплю, пока окно с мангой не впереди.",
             Mood::Error => "Ой, что-то не так. Загляните в «Подготовку» на главной.",
         }
     }
