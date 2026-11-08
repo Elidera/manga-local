@@ -46,7 +46,7 @@ Name: "cpu"; Description: "Нейросетевой движок llama.cpp (то
 
 [Tasks]
 Name: "desktopicon"; Description: "Ярлык на рабочем столе"
-Name: "ocr"; Description: "Установить модули распознавания текста Windows — корейский, японский, китайский и английский (нужны права администратора, ~40 МБ)"
+Name: "ocr"; Description: "Установить модули распознавания текста Windows — корейский, японский, китайский и английский (нужны права администратора; загрузка из Windows Update — 5–20 минут, уже установленные пропускаются)"
 
 [Files]
 Source: "{#Dist}\manga-local.exe"; DestDir: "{app}"; Components: app; Flags: ignoreversion
@@ -84,32 +84,105 @@ begin
   Result := '';
 end;
 
-// Windows OCR language components (ko-KR, ja-JP, zh-CN, en-US): elevated, hidden PowerShell.
-// Exit code 0 = all installed (checked afterwards, not just "no error").
+// Windows OCR language components (ko-KR, ja-JP, zh-CN, en-US).
+// They come from Windows Update and can take 5-20 minutes, so an elevated hidden
+// PowerShell does the work while the wizard shows which language is being
+// downloaded and how long it has been. Already installed languages are skipped.
+function OcrLangName(Code: String): String;
+begin
+  if Code = 'ko-KR' then Result := 'корейский'
+  else if Code = 'ja-JP' then Result := 'японский'
+  else if Code = 'zh-CN' then Result := 'китайский'
+  else Result := 'английский';
+end;
+
+// About one second, while the wizard window stays responsive (Exec pumps messages).
+procedure WaitASecond();
+var
+  R: Integer;
+begin
+  Exec(ExpandConstant('{sys}\ping.exe'), '-n 2 127.0.0.1', '', SW_HIDE, ewWaitUntilTerminated, R);
+end;
+
 procedure InstallOcr();
 var
-  ResultCode: Integer;
-  Params: String;
+  ResultCode, Waited, Failed: Integer;
+  Script, Progress: String;
+  S: AnsiString;
+  Started, Done: Boolean;
 begin
-  Params := '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "' +
-    '$ok = $true; ' +
-    'foreach ($n in @(''Language.OCR~~~ko-KR~0.0.1.0'', ''Language.OCR~~~ja-JP~0.0.1.0'', ''Language.OCR~~~zh-CN~0.0.1.0'', ''Language.OCR~~~en-US~0.0.1.0'')) { ' +
-    'try { Add-WindowsCapability -Online -Name $n -ErrorAction Stop | Out-Null } catch { }; ' +
-    'if ((Get-WindowsCapability -Online -Name $n).State -ne ''Installed'') { $ok = $false } }; ' +
-    'if ($ok) { exit 0 } else { exit 3 }"';
-  WizardForm.StatusLabel.Caption := 'Установка модулей распознавания текста Windows…';
-  if not ShellExec('runas', 'powershell.exe', Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  Script := ExpandConstant('{tmp}\ocr-langs.ps1');
+  Progress := ExpandConstant('{tmp}\ocr-progress.txt');
+  SaveStringToFile(Script,
+    'param([string]$Progress)' + #13#10 +
+    '$failed = 0; $i = 0' + #13#10 +
+    'foreach ($l in @(''ko-KR'', ''ja-JP'', ''zh-CN'', ''en-US'')) {' + #13#10 +
+    '  $i++; $n = "Language.OCR~~~$l~0.0.1.0"' + #13#10 +
+    '  Set-Content -Path $Progress -Value "$i $l" -Encoding ASCII' + #13#10 +
+    '  try { if ((Get-WindowsCapability -Online -Name $n).State -ne ''Installed'') { Add-WindowsCapability -Online -Name $n -ErrorAction Stop | Out-Null } } catch { }' + #13#10 +
+    '  if ((Get-WindowsCapability -Online -Name $n).State -ne ''Installed'') { $failed++ }' + #13#10 +
+    '}' + #13#10 +
+    'Set-Content -Path $Progress -Value "done $failed" -Encoding ASCII' + #13#10, False);
+  DeleteFile(Progress);
+  WizardForm.StatusLabel.Caption := 'Установка распознавания текста Windows…';
+  WizardForm.FilenameLabel.Caption := 'Windows попросит разрешение администратора.';
+  if not ShellExec('runas', 'powershell.exe',
+      '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + Script + '" "' + Progress + '"',
+      '', SW_HIDE, ewNoWait, ResultCode) then
   begin
     Log('OCR: elevation refused or failed, code ' + IntToStr(ResultCode));
+    WizardForm.FilenameLabel.Caption := '';
     if not WizardSilent then
       MsgBox('Модули распознавания текста Windows не установлены: не получено разрешение администратора.' + #13#10 + #13#10 +
              'Manga Local покажет в панели, как установить их вручную (Параметры → Время и язык → Язык).', mbInformation, MB_OK);
-  end
-  else if ResultCode <> 0 then
+    exit;
+  end;
+
+  WizardForm.ProgressGauge.Style := npbstMarquee;
+  Waited := 0;
+  Started := False;
+  Done := False;
+  Failed := 0;
+  while not Done do
   begin
-    Log('OCR: install finished with code ' + IntToStr(ResultCode));
+    WaitASecond();
+    Waited := Waited + 1;
+    if LoadStringFromFile(Progress, S) then
+    begin
+      Started := True;
+      S := Trim(S);
+      if Copy(S, 1, 4) = 'done' then
+      begin
+        Done := True;
+        Failed := StrToIntDef(Trim(Copy(S, 5, 10)), 1);
+      end
+      else if Length(S) >= 7 then
+        WizardForm.StatusLabel.Caption := 'Скачивание распознавания текста Windows: ' +
+          OcrLangName(Copy(S, 3, 5)) + ' (' + Copy(S, 1, 1) + ' из 4)…';
+    end;
+    if not Done then
+    begin
+      if (not Started) and (Waited > 180) then break;  // the script never started
+      if Waited > 45 * 60 then break;
+      WizardForm.FilenameLabel.Caption := 'Загрузка из Windows Update, обычно 5–20 минут. Окно не зависло. Прошло: ' +
+        IntToStr(Waited div 60) + ' мин.';
+    end;
+  end;
+  WizardForm.ProgressGauge.Style := npbstNormal;
+  WizardForm.FilenameLabel.Caption := '';
+
+  if not Done then
+  begin
+    Log('OCR: gave up waiting after ' + IntToStr(Waited) + ' s');
     if not WizardSilent then
-      MsgBox('Не удалось установить модули распознавания текста Windows (код ' + IntToStr(ResultCode) + ').' + #13#10 + #13#10 +
+      MsgBox('Распознавание текста Windows устанавливается дольше обычного. Установка продолжится сама в фоне.' + #13#10 + #13#10 +
+             'Если перевод не заработает, перезагрузите компьютер — Manga Local покажет в панели, чего не хватает.', mbInformation, MB_OK);
+  end
+  else if Failed > 0 then
+  begin
+    Log('OCR: ' + IntToStr(Failed) + ' language(s) not installed');
+    if not WizardSilent then
+      MsgBox('Не удалось установить распознавание текста для ' + IntToStr(Failed) + ' из 4 языков.' + #13#10 + #13#10 +
              'Часто помогает перезагрузка и повторная установка. Manga Local покажет в панели, как установить их вручную.', mbInformation, MB_OK);
   end
   else
