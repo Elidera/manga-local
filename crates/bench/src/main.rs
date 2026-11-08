@@ -1,5 +1,5 @@
 //! manga-bench — run the bundled test lines through a llama-server with exactly
-//! the prompts the app uses (wuxia-core), and print a Markdown report.
+//! the prompts the app uses (manga-core), and print a Markdown report.
 //!
 //! Usage:
 //!   manga-bench --server http://127.0.0.1:8848 --name "Hy-MT2 1.8B" --prompt hymt \
@@ -8,9 +8,9 @@
 
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
-use wuxia_core::glossary::Glossary;
-use wuxia_core::history::History;
-use wuxia_core::prompt::{self, PromptInput, PromptStyle, TextKind};
+use manga_core::glossary::Glossary;
+use manga_core::history::History;
+use manga_core::prompt::{self, PromptInput, PromptStyle, TextKind};
 
 struct Args {
     server: String,
@@ -162,7 +162,7 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
     let t_all = Instant::now();
     for chunk in lines.chunks(12) {
         batches += 1;
-        let mut terms: Vec<&wuxia_core::glossary::Term> = Vec::new();
+        let mut terms: Vec<&manga_core::glossary::Term> = Vec::new();
         for l in chunk {
             for t in g.find_in(l, 24) {
                 if !terms.iter().any(|x| x.src == t.src) {

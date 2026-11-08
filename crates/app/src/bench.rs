@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
-use wuxia_core::prompt::TextKind;
+use manga_core::prompt::TextKind;
 
 pub fn lines_file(shared: &Shared) -> PathBuf {
     let user = shared.paths.data.join("bench.txt");
@@ -22,7 +22,7 @@ pub fn lines_file(shared: &Shared) -> PathBuf {
         user
     } else {
         let lang = shared.cfg().source_lang();
-        let file = if lang == wuxia_core::lang::Lang::En { "ko_lines.txt".to_string() } else { format!("{}_lines.txt", lang.code()) };
+        let file = if lang == manga_core::lang::Lang::En { "ko_lines.txt".to_string() } else { format!("{}_lines.txt", lang.code()) };
         shared.paths.install.join("bench").join(file)
     }
 }
@@ -127,7 +127,7 @@ pub async fn run(shared: Arc<Shared>) -> Result<PathBuf> {
     for (i, l) in lines.iter().enumerate() {
         for (name, rows, _) in &results {
             if let Some(r) = rows.get(i) {
-                tsv.push_str(&wuxia_core::tsv::line(&[l, name, &r.ms.to_string(), &r.misses.to_string(), &r.out]));
+                tsv.push_str(&manga_core::tsv::line(&[l, name, &r.ms.to_string(), &r.misses.to_string(), &r.out]));
             }
         }
     }

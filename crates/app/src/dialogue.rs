@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
-use wuxia_core::detect::{Event, Fingerprint, TextColor, WatchConfig, Watcher};
-use wuxia_core::prompt::TextKind;
-use wuxia_core::{lang, similarity, text};
+use manga_core::detect::{Event, Fingerprint, TextColor, WatchConfig, Watcher};
+use manga_core::prompt::TextKind;
+use manga_core::{lang, similarity, text};
 
 fn watch_cfg(c: &crate::config::Dialogue) -> WatchConfig {
     WatchConfig {

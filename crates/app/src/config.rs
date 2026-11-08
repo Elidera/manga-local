@@ -84,7 +84,7 @@ pub struct ModelPreset {
     pub max_tokens: u32,
     /// Ask the chat template to disable "thinking" (Qwen3.x).
     pub no_think: bool,
-    /// Optional custom prompt template (see wuxia_core::prompt::render_custom).
+    /// Optional custom prompt template (see manga_core::prompt::render_custom).
     pub template: String,
     /// Approximate size for the UI.
     pub size_gb: f32,
@@ -480,8 +480,8 @@ impl Config {
         crate::win::game_in_foreground(&self.general.window_match, profile(&self.general.profile).window_class)
     }
 
-    pub fn source_lang(&self) -> wuxia_core::lang::Lang {
-        wuxia_core::lang::Lang::from_code(&self.general.source_lang)
+    pub fn source_lang(&self) -> manga_core::lang::Lang {
+        manga_core::lang::Lang::from_code(&self.general.source_lang)
     }
 
     pub fn active_model(&self) -> &ModelPreset {

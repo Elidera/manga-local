@@ -3,7 +3,7 @@
 //! * `manga-local.exe --selftest <folder> [--out report.md]` — for every
 //!   `*.png` in the folder run the real pipeline (Windows OCR, the auto mode's
 //!   speech filter and grouping, F8's label filter) and compare with
-//!   `<name>.expect` (see `wuxia_core::selftest`). Writes a Markdown report
+//!   `<name>.expect` (see `manga_core::selftest`). Writes a Markdown report
 //!   (also to the GitHub Actions summary when run in CI). Exit code: 0 — all
 //!   passed, 1 — some failed, 2 — Windows OCR is not available here.
 //! * Ctrl+F9 on a page (Command::SaveCase) — saves the screen as a new case
@@ -19,9 +19,9 @@ use anyhow::{anyhow, Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use wuxia_core::image::Frame;
-use wuxia_core::lang::Lang;
-use wuxia_core::selftest::{self as st, CaseResult, Found};
+use manga_core::image::Frame;
+use manga_core::lang::Lang;
+use manga_core::selftest::{self as st, CaseResult, Found};
 
 /// Read a PNG into a BGRA frame.
 pub fn load_png(path: &Path) -> Result<Frame> {

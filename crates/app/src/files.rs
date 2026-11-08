@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use wuxia_core::prompt::TextKind;
+use manga_core::prompt::TextKind;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -46,7 +46,7 @@ pub async fn translate_chapter(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Oc
         u.files_progress = None;
         match &r {
             Ok((out, n, stopped)) => {
-                let what = wuxia_core::text::count_ru(*n, "страница", "страницы", "страниц");
+                let what = manga_core::text::count_ru(*n, "страница", "страницы", "страниц");
                 if *stopped {
                     u.notice(format!("Перевод главы остановлен: готово {what} — {}", out.display()));
                 } else {
@@ -115,7 +115,7 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
             done += 1;
             continue;
         }
-        progress(&format!("перевожу {}", wuxia_core::text::count_ru(items.len(), "пузырь", "пузыря", "пузырей")));
+        progress(&format!("перевожу {}", manga_core::text::count_ru(items.len(), "пузырь", "пузыря", "пузырей")));
         let mut result: HashMap<String, String> = HashMap::new();
         let mut unique: Vec<String> = Vec::new();
         for it in &items {
@@ -159,7 +159,7 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
 
 /// OCR of a whole page; tall webtoon strips in overlapping pieces of normal
 /// page height (each line is taken from the piece where it is not cut).
-async fn recognize(ocr: &Ocr, frame: &wuxia_core::image::Frame, lang: wuxia_core::lang::Lang) -> Result<Vec<OcrLine>, String> {
+async fn recognize(ocr: &Ocr, frame: &manga_core::image::Frame, lang: manga_core::lang::Lang) -> Result<Vec<OcrLine>, String> {
     // Small text of narrow manhwa pages (720–1000 px wide) reads better at 2×.
     let up = if frame.width < 1300 { 2 } else { 1 };
     let pieces = slice::pieces(frame.height, 2400, 400);

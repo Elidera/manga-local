@@ -7,7 +7,7 @@ use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::time::Duration;
-use wuxia_core::prompt::Message;
+use manga_core::prompt::Message;
 
 use crate::config::ModelPreset;
 

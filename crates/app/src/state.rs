@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
-use wuxia_core::image::Rect;
+use manga_core::image::Rect;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ServerStatus {
@@ -33,7 +33,7 @@ impl ServerStatus {
 /// A still picture of the screen with the texts found on it.
 #[derive(Debug, Clone)]
 pub struct FreezeView {
-    pub shot: std::sync::Arc<wuxia_core::image::Frame>,
+    pub shot: std::sync::Arc<manga_core::image::Frame>,
     pub lines: Vec<FreezeLine>,
     pub selected: Option<usize>,
     /// Text recognition still running.
@@ -146,7 +146,7 @@ pub struct InterfaceItem {
     pub lines: usize,
     /// Picture laid under the translation (screen px): the letters covered
     /// with paper in a bubble, or the background filled in over artwork.
-    pub patch: Option<Arc<wuxia_core::clean::Patch>>,
+    pub patch: Option<Arc<manga_core::clean::Patch>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -159,7 +159,7 @@ pub struct InterfaceView {
 /// What the dialogue OCR saw last time (shown in the panel for troubleshooting).
 #[derive(Debug, Clone)]
 pub struct OcrDebug {
-    pub frame: std::sync::Arc<wuxia_core::image::Frame>,
+    pub frame: std::sync::Arc<manga_core::image::Frame>,
     pub text: String,
     pub ms: u128,
     pub id: u64,
@@ -214,7 +214,7 @@ pub struct UiState {
     pub show_original: bool,
     pub selecting_region: bool,
     /// Screenshot shown in the region picker.
-    pub region_shot: Option<std::sync::Arc<wuxia_core::image::Frame>>,
+    pub region_shot: Option<std::sync::Arc<manga_core::image::Frame>>,
     /// Freeze frame being shown (Ctrl+F8).
     pub freeze: Option<FreezeView>,
     /// Hotkeys that could not be registered (for the self-check).

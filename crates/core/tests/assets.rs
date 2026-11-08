@@ -1,7 +1,7 @@
 //! Bundled assets must parse and interact sensibly with the core.
-use wuxia_core::glossary::Glossary;
-use wuxia_core::lang::{self, Lang};
-use wuxia_core::prompt::{build, PromptInput, PromptStyle, TextKind};
+use manga_core::glossary::Glossary;
+use manga_core::lang::{self, Lang};
+use manga_core::prompt::{build, PromptInput, PromptStyle, TextKind};
 
 fn lines(text: &str) -> Vec<&str> {
     text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).collect()
@@ -18,7 +18,7 @@ fn check(glossary: &str, bench: &str, lang: Lang, min_hits: usize) {
     for l in &ls {
         assert_eq!(lang::detect(l), Some(lang), "{l}");
         assert!(lang::is_label(l, lang), "not a bubble: {l}");
-        assert_eq!(&wuxia_core::text::normalize_for(l, lang), l, "test line not normalized: {l}");
+        assert_eq!(&manga_core::text::normalize_for(l, lang), l, "test line not normalized: {l}");
         let terms = g.find_in(l, 24);
         if !terms.is_empty() {
             hits += 1;
@@ -53,7 +53,7 @@ fn chinese_assets() {
     assert!(g.load_tsv(include_str!("../../../assets/glossary/10_chengyu.tsv")) >= 20);
     for l in lines(include_str!("../../../assets/bench/zh_lines.txt")) {
         assert_eq!(lang::detect(l), Some(Lang::Zh), "{l}");
-        assert_eq!(&wuxia_core::text::normalize_line(l), l, "bench line not normalized: {l}");
+        assert_eq!(&manga_core::text::normalize_line(l), l, "bench line not normalized: {l}");
     }
 }
 

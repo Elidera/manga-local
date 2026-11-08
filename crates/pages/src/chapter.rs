@@ -5,7 +5,7 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use wuxia_core::image::Frame;
+use manga_core::image::Frame;
 
 const IMAGE_EXT: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif"];
 

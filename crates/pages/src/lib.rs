@@ -7,8 +7,8 @@ pub mod chapter;
 pub mod letter;
 pub mod slice;
 
-use wuxia_core::clean;
-use wuxia_core::image::{contrast_text, Frame, Rect};
+use manga_core::clean;
+use manga_core::image::{contrast_text, Frame, Rect};
 
 /// A bubble found on a page, ready to be cleaned and lettered.
 #[derive(Debug, Clone)]
@@ -28,7 +28,7 @@ pub fn render(frame: &mut Frame, bubbles: &[Bubble], letterer: &letter::Letterer
     let original = frame.clone();
     let mut fg_outline: Vec<([u8; 3], Option<[u8; 3]>)> = Vec::new();
     for b in bubbles {
-        let paper = !b.busy && wuxia_core::image::luma(b.around[2], b.around[1], b.around[0]) > 200;
+        let paper = !b.busy && manga_core::image::luma(b.around[2], b.around[1], b.around[0]) > 200;
         let patch = clean::clean_text(&original, &b.rect, b.line_h, b.around, paper);
         let under = match &patch {
             Some(p) if b.busy => p.mean_rgb(),

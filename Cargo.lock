@@ -1331,10 +1331,14 @@ checksum = "e20f57f9918e5bd7bc58c22cdd70a6afc7375d4dd9683af5f2b34bd3d2bba619"
 name = "manga-bench"
 version = "0.1.0"
 dependencies = [
+ "manga-core",
  "serde_json",
  "ureq 2.12.1",
- "wuxia-core",
 ]
+
+[[package]]
+name = "manga-core"
+version = "0.1.0"
 
 [[package]]
 name = "manga-local"
@@ -1344,6 +1348,7 @@ dependencies = [
  "eframe",
  "futures-util",
  "image",
+ "manga-core",
  "manga-ocr-rs",
  "manga-pages",
  "ort",
@@ -1358,7 +1363,6 @@ dependencies = [
  "tracing-subscriber",
  "windows",
  "winresource",
- "wuxia-core",
 ]
 
 [[package]]
@@ -1378,7 +1382,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "image",
- "wuxia-core",
+ "manga-core",
  "zip",
 ]
 
@@ -3753,10 +3757,6 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
-
-[[package]]
-name = "wuxia-core"
-version = "0.1.0"
 
 [[package]]
 name = "x11-dl"

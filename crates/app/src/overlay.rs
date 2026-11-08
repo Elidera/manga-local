@@ -7,7 +7,7 @@
 //! window never showed up over the game (and could not be hidden from capture).
 //!
 //! * Text is rendered by GDI (Segoe UI, anti-aliased) into a black/white mask
-//!   and composed with plates in `wuxia_core::raster`.
+//!   and composed with plates in `manga_core::raster`.
 //! * The window is only as large as what is drawn right now, and hidden when
 //!   there is nothing to show, so it never covers the whole game.
 //! * Every 500 ms it re-asserts "topmost": some games raise themselves above
@@ -40,7 +40,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_SHOWNOACTIVATE, ULW_ALPHA, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONUP,
     WM_SETCURSOR, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
-use wuxia_core::raster::{self, Canvas, Rgba};
+use manga_core::raster::{self, Canvas, Rgba};
 
 pub const TITLE: &str = "Manga Local Overlay";
 
@@ -64,7 +64,7 @@ struct Look {
 /// The cleaning picture of a bubble; compared by identity (it is rebuilt only
 /// with a new page), so the 30-a-second scene comparison stays cheap.
 #[derive(Debug, Clone)]
-struct PatchRef(Arc<wuxia_core::clean::Patch>);
+struct PatchRef(Arc<manga_core::clean::Patch>);
 
 impl PartialEq for PatchRef {
     fn eq(&self, o: &Self) -> bool {
@@ -80,7 +80,7 @@ enum El {
     /// Page translation: Russian text painted over the original one — a single
     /// line label, or a speech bubble with the text wrapped inside (`lines` ≥ 2
     /// or text too long for one line). `line_h` = original line height, px.
-    /// `patch`: the original cleaned away (see `wuxia_core::clean`); then no fill is drawn.
+    /// `patch`: the original cleaned away (see `manga_core::clean`); then no fill is drawn.
     Label { rect: [f32; 4], text: String, bg: [u8; 3], fg: [u8; 3], plate: bool, font_scale: f32, line_h: f32, lines: usize, patch: Option<PatchRef>, outline: bool },
     /// Interface Mode "list": all labels in one box on the right.
     List { text: String },
@@ -252,7 +252,7 @@ struct Op {
     extras: Vec<[i32; 4]>,
     extra_color: Rgba,
     /// Laid first: the cleaned original under the translation.
-    patch: Option<Arc<wuxia_core::clean::Patch>>,
+    patch: Option<Arc<manga_core::clean::Patch>>,
 }
 
 impl Op {
@@ -424,7 +424,7 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
             let max_h = (h + pad) as i32;
             let start = (lh * font_scale).clamp(9.0 * s, 64.0 * s) as i32;
             let min = ((start as f32 * 0.45).max(9.0 * s)) as i32;
-            let px = wuxia_core::layout::fit_font(start, min, max_h, |px| {
+            let px = manga_core::layout::fit_font(start, min, max_h, |px| {
                 let (tw, th) = g.measure(text, px, false, PARA, box_w);
                 (tw, if tw > box_w + 2 { i32::MAX } else { th })
             });

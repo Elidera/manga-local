@@ -10,7 +10,7 @@ name = "manga-local"
 path = "src/main.rs"
 
 [dependencies]
-wuxia-core = { path = "../core" }
+manga-core = { path = "../core" }
 manga-pages = { path = "../pages" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }

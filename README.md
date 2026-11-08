@@ -63,7 +63,7 @@ crates/bench  проверка качества перевода на набор
 ## Сборка (для разработчиков)
 
 ```
-cargo test -p wuxia-core              # на любой ОС
+cargo test -p manga-core              # на любой ОС
 cargo build -p manga-local --release  # Windows 10/11 x64, MSVC
 ```
 

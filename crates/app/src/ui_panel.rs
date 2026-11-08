@@ -543,10 +543,10 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
                 _ => String::new(),
             };
             let ocr_title = match cfg.source_lang() {
-                wuxia_core::lang::Lang::En => "Распознавание английского текста (Windows OCR)",
-                wuxia_core::lang::Lang::Zh => "Распознавание китайского текста (Windows OCR)",
-                wuxia_core::lang::Lang::Ko => "Распознавание корейского текста (Windows OCR)",
-                wuxia_core::lang::Lang::Ja => "Распознавание японского текста (Windows OCR)",
+                manga_core::lang::Lang::En => "Распознавание английского текста (Windows OCR)",
+                manga_core::lang::Lang::Zh => "Распознавание китайского текста (Windows OCR)",
+                manga_core::lang::Lang::Ko => "Распознавание корейского текста (Windows OCR)",
+                manga_core::lang::Lang::Ja => "Распознавание японского текста (Windows OCR)",
             };
             check_item(ui, ocr_ok, ocr_title, &ocr_detail);
             ui.horizontal(|ui| {

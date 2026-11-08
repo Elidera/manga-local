@@ -7,12 +7,12 @@ use anyhow::{anyhow, Result};
 use std::io::Write;
 use std::sync::Mutex;
 use std::time::Instant;
-use wuxia_core::cache::Store;
-use wuxia_core::fixes::Fixes;
-use wuxia_core::glossary::Glossary;
-use wuxia_core::history::History;
-use wuxia_core::memory::{FuzzyMemory, NameBook};
-use wuxia_core::prompt::{self, PromptInput, PromptStyle, Reject, TextKind};
+use manga_core::cache::Store;
+use manga_core::fixes::Fixes;
+use manga_core::glossary::Glossary;
+use manga_core::history::History;
+use manga_core::memory::{FuzzyMemory, NameBook};
+use manga_core::prompt::{self, PromptInput, PromptStyle, Reject, TextKind};
 
 pub struct Translator {
     paths: Paths,
@@ -277,11 +277,11 @@ impl Translator {
         append(&self.paths.cache(), &line);
         self.fuzzy.lock().unwrap().forget(src);
         let (date, time) = crate::win::local_date_time();
-        append(&self.paths.data.join("bad.tsv"), &wuxia_core::tsv::line(&[src, bad, &format!("{date} {time}")]));
+        append(&self.paths.data.join("bad.tsv"), &manga_core::tsv::line(&[src, bad, &format!("{date} {time}")]));
         tracing::info!("плохой перевод отмечен: {src} → {bad}");
     }
 
-    /// The user's own dictionaries as one text for sharing (see wuxia_core::bundle).
+    /// The user's own dictionaries as one text for sharing (see manga_core::bundle).
     pub fn export_bundle(&self) -> String {
         let read = |p: std::path::PathBuf| std::fs::read_to_string(p).unwrap_or_default();
         let parts = [
@@ -290,13 +290,13 @@ impl Translator {
             ("corrections.tsv", read(self.paths.corrections())),
         ];
         let refs: Vec<(&str, &str)> = parts.iter().map(|(n, c)| (*n, c.as_str())).collect();
-        wuxia_core::bundle::pack(&refs)
+        manga_core::bundle::pack(&refs)
     }
 
     /// Merge a shared bundle into the user's files (no duplicates) and reload.
     /// Returns a short report like «глоссарий +12, исправления +3».
     pub fn import_bundle(&self, text: &str, profile: &str) -> Result<String> {
-        let parts = wuxia_core::bundle::unpack(text);
+        let parts = manga_core::bundle::unpack(text);
         if parts.is_empty() {
             return Err(anyhow!("это не файл словарей Manga Local"));
         }
@@ -312,7 +312,7 @@ impl Translator {
                 }
             };
             let existing = std::fs::read_to_string(&path).unwrap_or_default();
-            let (merged, added) = wuxia_core::bundle::merge(&existing, &content);
+            let (merged, added) = manga_core::bundle::merge(&existing, &content);
             if added > 0 {
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir)?;
@@ -528,7 +528,7 @@ impl Translator {
         let t0 = Instant::now();
         let messages = {
             let g = self.glossary.lock().unwrap();
-            let mut terms: Vec<&wuxia_core::glossary::Term> = Vec::new();
+            let mut terms: Vec<&manga_core::glossary::Term> = Vec::new();
             for it in items {
                 for t in g.find_in(it, 24) {
                     if !terms.iter().any(|x| x.src == t.src) {
@@ -573,7 +573,7 @@ impl Translator {
         if !lines.is_empty() {
             append(&self.paths.cache(), &lines);
         }
-        tracing::info!(target: "translate", "[{}|batch|{} мс] {}", preset.id, t0.elapsed().as_millis(), wuxia_core::text::count_ru(items.len(), "текст", "текста", "текстов"));
+        tracing::info!(target: "translate", "[{}|batch|{} мс] {}", preset.id, t0.elapsed().as_millis(), manga_core::text::count_ru(items.len(), "текст", "текста", "текстов"));
         Ok(out.into_iter().map(|t| t.map(|t| self.fix_ru(&t))).collect())
     }
 }

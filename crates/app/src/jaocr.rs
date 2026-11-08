@@ -1,5 +1,5 @@
 //! Vertical and handwritten Japanese. Windows OCR reads only horizontal lines;
-//! here the bubbles are found by the picture itself (`wuxia_core::bubbles`)
+//! here the bubbles are found by the picture itself (`manga_core::bubbles`)
 //! and their text is read by manga-ocr (kha-white/manga-ocr-base exported to
 //! ONNX, ~441 MB, Apache-2.0), which reads columns and handwriting alike.
 //!
@@ -10,7 +10,7 @@
 use crate::state::Shared;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use wuxia_core::image::{Frame, Rect};
+use manga_core::image::{Frame, Rect};
 
 const FILES: &[(&str, u64)] = &[("vocab.txt", 20_000), ("decoder_model.onnx", 100_000_000), ("encoder_model.onnx", 300_000_000)];
 const BASE: &str = "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/main";
@@ -115,7 +115,7 @@ impl JaOcr {
             }
         };
         let text = r.text.trim().to_string();
-        let japanese = text.chars().filter(|&c| wuxia_core::text::is_kana(c) || wuxia_core::text::is_han(c)).count();
+        let japanese = text.chars().filter(|&c| manga_core::text::is_kana(c) || manga_core::text::is_han(c)).count();
         tracing::debug!(target: "jaocr", "{text} ({:.2})", r.confidence);
         (r.confidence >= 0.45 && japanese >= 1 && japanese * 2 >= text.chars().count()).then_some(text)
     }

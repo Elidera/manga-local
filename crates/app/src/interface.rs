@@ -16,10 +16,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use crate::ocr::OcrLine;
-use wuxia_core::image::{contrast_text, luma, Frame, Rect};
-use wuxia_core::lang::Lang;
-use wuxia_core::layout;
-use wuxia_core::prompt::TextKind;
+use manga_core::image::{contrast_text, luma, Frame, Rect};
+use manga_core::lang::Lang;
+use manga_core::layout;
+use manga_core::prompt::TextKind;
 
 /// Coarse 32×18 luminance grid of the whole screen, for auto-hide.
 fn coarse(frame: &Frame) -> Vec<f32> {
@@ -55,8 +55,8 @@ pub fn upscale_for(configured: u32, screen_h: i32) -> u32 {
 }
 
 /// Is this OCR line a label F8 translates? (Shared with `--selftest`.)
-pub fn is_label_line(text: &str, lang: wuxia_core::lang::Lang, tr: &Translator) -> bool {
-    wuxia_core::lang::is_label(text, lang) && !tr.should_skip(text)
+pub fn is_label_line(text: &str, lang: manga_core::lang::Lang, tr: &Translator) -> bool {
+    manga_core::lang::is_label(text, lang) && !tr.should_skip(text)
 }
 
 /// Group the OCR lines of a page into bubbles, in reading order. Each bubble
@@ -71,9 +71,9 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
         .map(|g| {
             let rect = layout::block_rect(&rects, g);
             let texts: Vec<&str> = g.iter().map(|&i| kept[i].text.as_str()).collect();
-            let mut src = tr.fix_ocr(&wuxia_core::text::join_lines_for(&texts, lang));
+            let mut src = tr.fix_ocr(&manga_core::text::join_lines_for(&texts, lang));
             if lang == Lang::En {
-                src = wuxia_core::text::sentence_case_en(&src);
+                src = manga_core::text::sentence_case_en(&src);
             }
             let line_h = g.iter().map(|&i| rects[i].h).sum::<f32>() / g.len() as f32;
             // Look at the paper a little outside the text: flat = a bubble (fill
@@ -84,8 +84,8 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
             // Clean the original: the letters filled from their neighbours.
             // A speech bubble: flat and light paper (a flat grey or dark background is
             // the artwork, where letters may touch lines of the picture).
-            let paper = !busy && wuxia_core::image::luma(bg[2], bg[1], bg[0]) > 200;
-            let patch = wuxia_core::clean::clean_text(frame, &rect, line_h, bg, paper);
+            let paper = !busy && manga_core::image::luma(bg[2], bg[1], bg[0]) > 200;
+            let patch = manga_core::clean::clean_text(frame, &rect, line_h, bg, paper);
             let fg = match &patch {
                 Some(p) if busy => contrast_text(p.mean_rgb()),
                 _ => contrast_text(bg),
@@ -113,8 +113,8 @@ fn reading(session: u64) -> bool {
 pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Vec<InterfaceItem> {
     let mut items = bubbles(lines, lang, tr, frame);
     let Some(ja) = ja.filter(|_| lang == Lang::Ja) else { return items };
-    let found = wuxia_core::bubbles::find(frame);
-    let inside = |r: &wuxia_core::image::Rect, o: &wuxia_core::image::Rect| {
+    let found = manga_core::bubbles::find(frame);
+    let inside = |r: &manga_core::image::Rect, o: &manga_core::image::Rect| {
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h
     };
@@ -122,30 +122,30 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
     // from drawn circles): such lines stay only when they look like real text.
     items.retain(|it| {
         found.iter().any(|f| inside(&it.rect, &f.outer)) || {
-            let japanese = it.src.chars().filter(|&c| wuxia_core::text::is_kana(c) || wuxia_core::text::is_han(c)).count();
+            let japanese = it.src.chars().filter(|&c| manga_core::text::is_kana(c) || manga_core::text::is_han(c)).count();
             japanese >= 4 && !it.src.contains(['〇', '○', '◯'])
         }
     });
     // Horizontal bubbles Windows OCR has read stay its own (faster, as good).
-    let todo: Vec<wuxia_core::bubbles::Found> = found.into_iter().filter(|f| f.vertical || !items.iter().any(|it| inside(&it.rect, &f.outer))).collect();
+    let todo: Vec<manga_core::bubbles::Found> = found.into_iter().filter(|f| f.vertical || !items.iter().any(|it| inside(&it.rect, &f.outer))).collect();
     if todo.is_empty() {
         return items;
     }
     let t0 = Instant::now();
     let f2 = frame.clone();
-    let read: Vec<(wuxia_core::bubbles::Found, String)> = tokio::task::spawn_blocking(move || todo.into_iter().filter_map(|f| ja.read(&f2, &f.text).map(|t| (f, t))).collect()).await.unwrap_or_default();
+    let read: Vec<(manga_core::bubbles::Found, String)> = tokio::task::spawn_blocking(move || todo.into_iter().filter_map(|f| ja.read(&f2, &f.text).map(|t| (f, t))).collect()).await.unwrap_or_default();
     tracing::info!(target: "interface", "manga-ocr: {} пузырей за {} мс", read.len(), t0.elapsed().as_millis());
     for (f, text) in read {
         items.retain(|it| !inside(&it.rect, &f.outer));
-        let src = tr.fix_ocr(&wuxia_core::text::normalize_for(&text, lang));
+        let src = tr.fix_ocr(&manga_core::text::normalize_for(&text, lang));
         if src.is_empty() || tr.should_skip(&src) {
             continue;
         }
         // Russian is written across: give it most of the bubble's width.
         let cx = f.text.x + f.text.w / 2.0;
         let w = (f.outer.w * 0.78).max(f.text.w);
-        let rect = wuxia_core::image::Rect { x: cx - w / 2.0, y: f.text.y, w, h: f.text.h };
-        let patch = wuxia_core::clean::clean_text(frame, &f.text, f.char_px, f.paper, true);
+        let rect = manga_core::image::Rect { x: cx - w / 2.0, y: f.text.y, w, h: f.text.h };
+        let patch = manga_core::clean::clean_text(frame, &f.text, f.char_px, f.paper, true);
         items.push(InterfaceItem { fg: contrast_text(f.paper), busy: false, bg: f.paper, rect, src, dst: None, line_h: f.char_px, lines: f.lines.max(2), patch: patch.map(Arc::new) });
     }
     let order = layout::reading_order(&items.iter().map(|it| it.rect).collect::<Vec<_>>(), true);
@@ -470,7 +470,7 @@ pub async fn translate_texts(
                         }
                     }
                     if !rest.is_empty() {
-                        tracing::info!("пакет: {} переведу по одному", wuxia_core::text::count_ru(rest.len(), "пузырь", "пузыря", "пузырей"));
+                        tracing::info!("пакет: {} переведу по одному", manga_core::text::count_ru(rest.len(), "пузырь", "пузыря", "пузырей"));
                     }
                 }
                 Err(e) => tracing::warn!("пакетный перевод страницы: {e}; перевожу по одному"),

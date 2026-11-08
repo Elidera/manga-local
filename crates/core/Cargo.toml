@@ -1,6 +1,6 @@
 [package]
-name = "wuxia-core"
-description = "Platform-independent core of Manga Local (copied from Wuxia Local d2ee424): text cleanup, glossary, prompts, cache, change detection"
+name = "manga-core"
+description = "Platform-independent core of Manga Local (grew from Wuxia Local d2ee424): languages, text cleanup, glossary, prompts, bubbles, cleaning"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

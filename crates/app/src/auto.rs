@@ -13,10 +13,10 @@ use crate::translate::{Opts, Translator};
 use crate::win;
 use std::sync::Arc;
 use std::time::Instant;
-use wuxia_core::image::Rect;
-use wuxia_core::{layout, zone};
-use wuxia_core::prompt::TextKind;
-use wuxia_core::{lang, similarity, text};
+use manga_core::image::Rect;
+use manga_core::{layout, zone};
+use manga_core::prompt::TextKind;
+use manga_core::{lang, similarity, text};
 
 struct Active {
     id: u64,
@@ -117,8 +117,8 @@ impl AutoState {
         for a in self.active.iter_mut() {
             a.missed += 1;
         }
-        let mut new: Vec<(String, wuxia_core::image::Rect)> = Vec::new();
-        let mut moved: Vec<(u64, wuxia_core::image::Rect)> = Vec::new();
+        let mut new: Vec<(String, manga_core::image::Rect)> = Vec::new();
+        let mut moved: Vec<(u64, manga_core::image::Rect)> = Vec::new();
         for (t, r) in &found {
             // The same text read slightly differently (OCR jitter, a button partly
             // covered by an icon) is still the same line: keep its translation.
@@ -172,11 +172,11 @@ impl AutoState {
 /// Speech-like text blocks on a whole-screen OCR result, as they will be
 /// translated: "Name: text" when a speaker name sits above the line.
 /// Shared by the game loop and the screenshot tests (`--selftest`).
-pub fn speech_blocks(lines: &[ocr::OcrLine], lang: lang::Lang, tr: &Translator) -> Vec<(String, wuxia_core::image::Rect)> {
+pub fn speech_blocks(lines: &[ocr::OcrLine], lang: lang::Lang, tr: &Translator) -> Vec<(String, manga_core::image::Rect)> {
     let rects: Vec<_> = lines.iter().map(|l| l.rect).collect();
     let blocks = layout::group_lines(&rects);
     let brects: Vec<_> = blocks.iter().map(|idx| layout::block_rect(&rects, idx)).collect();
-    let mut found: Vec<(String, wuxia_core::image::Rect)> = Vec::new();
+    let mut found: Vec<(String, manga_core::image::Rect)> = Vec::new();
     for (bi, idx) in blocks.iter().enumerate() {
         let block: Vec<ocr::OcrLine> = idx.iter().map(|&i| lines[i].clone()).collect();
         let t = tr.fix_ocr(&ocr::subtitle_text(block, lang));

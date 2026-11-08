@@ -7,10 +7,10 @@
 use anyhow::{anyhow, Context, Result};
 use std::sync::mpsc;
 use tokio::sync::oneshot;
-use wuxia_core::image::{Frame, Rect};
+use manga_core::image::{Frame, Rect};
 use std::collections::HashMap;
-use wuxia_core::lang::{self, Lang};
-use wuxia_core::text;
+use manga_core::lang::{self, Lang};
+use manga_core::text;
 
 use windows::core::HSTRING;
 use windows::Globalization::Language;

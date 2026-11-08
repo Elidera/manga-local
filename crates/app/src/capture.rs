@@ -7,7 +7,7 @@
 //! called without CAPTUREBLT, so it never ends up in our own OCR.
 //! A Windows.Graphics.Capture backend can replace this behind the same function.
 
-use wuxia_core::image::Frame;
+use manga_core::image::Frame;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject,

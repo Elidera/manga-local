@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p wuxia-core -p manga-pages
+      - run: cargo test -p manga-core -p manga-pages
 
   windows:
     runs-on: windows-latest
@@ -41,7 +41,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Test core
-        run: cargo test -p wuxia-core -p manga-pages
+        run: cargo test -p manga-core -p manga-pages
 
       # manga-ocr's build script downloads its model unless the files exist:
       # the program downloads it itself when the reader turns the feature on.

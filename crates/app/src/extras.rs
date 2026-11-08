@@ -9,10 +9,10 @@ use crate::translate::{Opts, Translator};
 use crate::win;
 use std::sync::Arc;
 use std::time::Duration;
-use wuxia_core::lang::{self, Lang};
-use wuxia_core::layout;
-use wuxia_core::prompt::TextKind;
-use wuxia_core::text;
+use manga_core::lang::{self, Lang};
+use manga_core::layout;
+use manga_core::prompt::TextKind;
+use manga_core::text;
 
 fn short(s: &str) -> String {
     let t: String = s.chars().take(60).collect();
@@ -93,7 +93,7 @@ async fn retranslate_page(shared: Arc<Shared>, tr: Arc<Translator>, gen: u64, pa
         if let Some(v) = u.interface.as_mut().filter(|v| v.generation == gen) {
             v.pending = pairs.len();
         }
-        u.notice(format!("Плохой перевод отмечен, перевожу страницу заново ({})", wuxia_core::text::count_ru(pairs.len(), "пузырь", "пузыря", "пузырей")))
+        u.notice(format!("Плохой перевод отмечен, перевожу страницу заново ({})", manga_core::text::count_ru(pairs.len(), "пузырь", "пузыря", "пузырей")))
     });
     let set = |src: &str, dst: String| {
         shared.ui(|u| {
@@ -236,8 +236,8 @@ pub fn add_term(shared: &Shared, tr: &Translator, src: &str, dst: &str) {
     }
     let path = shared.paths.user_glossary();
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let line = wuxia_core::tsv::line(&[src, dst]);
-    let (merged, added) = wuxia_core::bundle::merge(&existing, &line);
+    let line = manga_core::tsv::line(&[src, dst]);
+    let (merged, added) = manga_core::bundle::merge(&existing, &line);
     if added > 0 && std::fs::write(&path, merged).is_ok() {
         let (n, f) = tr.reload_dictionaries(&shared.cfg().general.profile);
         shared.ui(|u| {
@@ -359,7 +359,7 @@ pub async fn diagnose(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Option<Ocr>
             let n = (f.bgra.len() / 4).max(1);
             let mut sum = 0u64;
             for p in f.bgra.chunks_exact(4).step_by(97) {
-                sum += wuxia_core::image::luma(p[0], p[1], p[2]) as u64;
+                sum += manga_core::image::luma(p[0], p[1], p[2]) as u64;
             }
             let mean = sum as f64 / (n / 97).max(1) as f64;
             add(Some(mean > 2.0), format!("Снимок экрана работает (средняя яркость {mean:.0} из 255){}", if mean > 2.0 { "" } else { " — снимок чёрный!" }));

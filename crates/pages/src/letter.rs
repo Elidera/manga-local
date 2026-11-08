@@ -3,7 +3,7 @@
 //! picked so it fits, centred, an outline over artwork.
 
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
-use wuxia_core::image::{Frame, Rect};
+use manga_core::image::{Frame, Rect};
 
 pub struct Letterer {
     font: FontVec,
@@ -102,7 +102,7 @@ impl Letterer {
         let max_h = (b.rect.h + pad).max(lh * 1.2);
         let start = (lh * font_scale).clamp(9.0, 96.0) as i32;
         let min = ((start as f32 * 0.45).max(9.0)) as i32;
-        let px = wuxia_core::layout::fit_font(start, min, max_h as i32, |px| {
+        let px = manga_core::layout::fit_font(start, min, max_h as i32, |px| {
             let lines = self.wrap(&b.text, px as f32, box_w);
             let w = lines.iter().map(|l| self.width(l, px as f32)).fold(0.0, f32::max);
             let h = self.line_height(px as f32) * lines.len() as f32;
