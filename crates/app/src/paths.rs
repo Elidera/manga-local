@@ -53,6 +53,10 @@ impl Paths {
     pub fn bundled_glossary_dir(&self) -> PathBuf {
         self.install.join("glossary")
     }
+    /// Fonts shipped with the program (comic lettering with Cyrillic, SIL OFL).
+    pub fn bundled_fonts_dir(&self) -> PathBuf {
+        self.install.join("fonts")
+    }
     pub fn user_glossary_dir(&self) -> PathBuf {
         self.data.join("glossary")
     }

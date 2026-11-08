@@ -68,3 +68,10 @@ cargo build -p manga-local --release  # Windows 10/11 x64, MSVC
 ```
 
 Установщик и portable-архив собирает GitHub Actions (`.github/workflows/release.yml`) на каждый push в main. Хранятся 5 последних сборок. Тег `v*` публикует релиз.
+
+## Шрифты
+
+В папке `fonts` — шрифты в стиле комиксов с русскими буквами: Balsamiq Sans
+(Balsamiq Sans Project Authors) и Pangolin (Pangolin Project Authors), лицензия
+SIL Open Font License 1.1 (тексты лицензий рядом со шрифтами). Программа
+подключает их только для себя, в Windows они не устанавливаются.

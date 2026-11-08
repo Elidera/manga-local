@@ -643,7 +643,7 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
         c.apply_profile();
     }
 
-    any |= search_card(ui, "Перевод страницы", "как показывать замена в пузыре подложкой списком размер шрифта высоты исходного текста оригинал под мышью наведение следить за прокруткой листать скрывать при прокрутке шрифт перевода пожелание к стилю qwen", |ui| {
+    any |= search_card(ui, "Перевод страницы", "как показывать замена в пузыре подложкой списком размер шрифта высоты исходного текста оригинал под мышью наведение следить за прокруткой листать скрывать при прокрутке шрифт перевода комикс пожелание к стилю qwen", |ui| {
         let i = &mut c.interface;
         dirty |= setting_row(ui, "Как показывать", "Замена — перевод внутри пузыря поверх оригинала", |ui| segmented(ui, &mut i.mode, &[("replace", "Замена"), ("backdrop", "Подложка"), ("list", "Списком")]));
         dirty |= setting_row(ui, "Размер шрифта", "Относительно высоты исходного текста; если не влезает — уменьшается сам", |ui| {
@@ -652,10 +652,10 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
         dirty |= setting_row(ui, "Оригинал под мышью", "Наведите мышь на пузырь — перевод с него уйдёт и будет виден оригинал", |ui| toggle(ui, &mut i.hover_original).changed());
         dirty |= setting_row(ui, "Следить за прокруткой", "Пока листаете, перевод спрятан; страница остановилась — новые пузыри переводятся сами", |ui| toggle(ui, &mut i.auto_hide).changed());
         let d = &mut c.dialogue;
-        dirty |= setting_row(ui, "Шрифт перевода", "Любой шрифт Windows", |ui| {
+        dirty |= setting_row(ui, "Шрифт перевода", "Balsamiq Sans и Pangolin — шрифты в стиле комиксов, идут с программой", |ui| {
             let mut changed = false;
             egui::ComboBox::from_id_source("overlay_font").selected_text(d.overlay_font.clone()).show_ui(ui, |ui| {
-                for f in ["Segoe UI", "Arial", "Tahoma", "Verdana", "Calibri", "Trebuchet MS", "Georgia", "Times New Roman", "Palatino Linotype", "Comic Sans MS"] {
+                for f in ["Balsamiq Sans", "Pangolin", "Segoe UI", "Arial", "Tahoma", "Verdana", "Calibri", "Trebuchet MS", "Georgia", "Times New Roman", "Palatino Linotype", "Comic Sans MS"] {
                     changed |= ui.selectable_value(&mut d.overlay_font, f.to_string(), f).changed();
                 }
             });

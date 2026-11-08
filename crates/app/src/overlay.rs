@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, CreateFontIndirectW, DeleteObject, DrawTextW, GdiFlush, GetDC, ReleaseDC, SelectObject,
+    AddFontResourceExW, CreateCompatibleDC, CreateDIBSection, FONT_RESOURCE_CHARACTERISTICS, CreateFontIndirectW, DeleteObject, DrawTextW, GdiFlush, GetDC, ReleaseDC, SelectObject,
     SetBkMode, SetTextColor, ANTIALIASED_QUALITY, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DEFAULT_CHARSET, DIB_RGB_COLORS,
     DRAW_TEXT_FORMAT, DT_CALCRECT, DT_CENTER, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_WORDBREAK, HDC, HFONT, LOGFONTW, TRANSPARENT,
 };
@@ -907,8 +907,24 @@ impl Window {
 
 /// Start the overlay thread. It polls the shared state ~30 times a second and
 /// redraws only when what should be shown has changed.
+/// Make the fonts shipped in `fonts\` usable by this program only (nothing is
+/// installed into Windows).
+fn load_bundled_fonts(dir: &std::path::Path) {
+    const FR_PRIVATE: u32 = 0x10;
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for p in rd.flatten().map(|e| e.path()) {
+        if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf")) {
+            continue;
+        }
+        let w = windows::core::HSTRING::from(p.as_os_str());
+        let n = unsafe { AddFontResourceExW(&w, FONT_RESOURCE_CHARACTERISTICS(FR_PRIVATE), None) };
+        tracing::info!("шрифт {}: {}", p.display(), if n > 0 { "загружен" } else { "не загружен" });
+    }
+}
+
 pub fn spawn(shared: Arc<Shared>) {
     let _ = SHARED.set(shared.clone());
+    load_bundled_fonts(&shared.paths.bundled_fonts_dir());
     let r = std::thread::Builder::new().name("overlay".into()).spawn(move || {
         let mut w = match unsafe { Window::create() } {
             Ok(w) => w,

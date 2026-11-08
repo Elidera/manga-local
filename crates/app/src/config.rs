@@ -37,6 +37,8 @@ pub struct General {
     pub visible_in_screenshots: bool,
     /// The "I'm still here, in the tray" notice was shown after the first ✕.
     pub tray_hint_shown: bool,
+    /// The comic font replaced the old default «Segoe UI» once (older configs).
+    pub comic_font_set: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,6 +217,7 @@ impl Default for General {
             pause_when_unfocused: true,
             visible_in_screenshots: false,
             tray_hint_shown: false,
+            comic_font_set: false,
         }
     }
 }
@@ -330,7 +333,7 @@ impl Default for Dialogue {
             position: "below".into(),
             box_rect: [0.2, 0.74, 0.6, 0.13],
             font_size: 26.0,
-            overlay_font: "Segoe UI".into(),
+            overlay_font: "Balsamiq Sans".into(),
             overlay_color: [250, 246, 235],
             overlay_name_color: [240, 200, 120],
             overlay_outline: true,
@@ -389,6 +392,15 @@ impl Config {
             cfg.models = default_models();
         }
         cfg.apply_profile();
+        // Configs from before the bundled comic font: switch the old default
+        // once (a font the reader chose is kept).
+        if !cfg.general.comic_font_set {
+            if cfg.dialogue.overlay_font == "Segoe UI" {
+                cfg.dialogue.overlay_font = "Balsamiq Sans".into();
+            }
+            cfg.general.comic_font_set = true;
+            let _ = cfg.save(paths);
+        }
         // Region mode cannot work with a near-full-screen region (the 3D scene never
         // settles); such configs come from before the auto mode existed.
         let r = cfg.dialogue.region;

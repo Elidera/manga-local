@@ -120,8 +120,8 @@ context_lines = 3
 show_original = false
 position = "below"
 font_size = 26.0
-# Вид перевода в режиме субтитров: шрифт Windows (он же для перевода страницы), цвета текста и имени (R, G, B), обводка букв
-overlay_font = "Segoe UI"
+# Вид перевода: шрифт (Balsamiq Sans и Pangolin — комиксные, идут с программой; или любой шрифт Windows), цвета текста и имени (R, G, B), обводка букв
+overlay_font = "Balsamiq Sans"
 overlay_color = [250, 246, 235]
 overlay_name_color = [240, 200, 120]
 overlay_outline = true
