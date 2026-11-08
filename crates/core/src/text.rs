@@ -428,6 +428,54 @@ pub fn sentence_case_en(s: &str) -> String {
     words.join(" ")
 }
 
+/// A Russian word with Latin letters inside («Оppa» — the model started in
+/// Cyrillic and finished the romanised word): the Latin letters are spelled
+/// in Russian by sound. Words entirely in Latin are left alone.
+fn fix_mixed_words(s: &str) -> String {
+    let latin = |c: char| c.is_ascii_alphabetic();
+    let cyr = |c: char| ('а'..='я').contains(&c.to_lowercase().next().unwrap_or(c)) || c == 'ё' || c == 'Ё';
+    let mut out = String::with_capacity(s.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        if word.chars().any(latin) && word.chars().any(cyr) {
+            for c in word.chars() {
+                if !latin(c) {
+                    out.push(c);
+                    continue;
+                }
+                let lower = c.to_ascii_lowercase();
+                let r = match lower {
+                    'a' => "а", 'b' => "б", 'c' => "к", 'd' => "д", 'e' => "е", 'f' => "ф", 'g' => "г", 'h' => "х", 'i' => "и",
+                    'j' => "дж", 'k' => "к", 'l' => "л", 'm' => "м", 'n' => "н", 'o' => "о", 'p' => "п", 'q' => "к", 'r' => "р",
+                    's' => "с", 't' => "т", 'u' => "у", 'v' => "в", 'w' => "в", 'x' => "кс", 'y' => "й", _ => "з",
+                };
+                if c.is_ascii_uppercase() {
+                    let mut it = r.chars();
+                    if let Some(f) = it.next() {
+                        out.extend(f.to_uppercase());
+                        out.extend(it);
+                    }
+                } else {
+                    out.push_str(r);
+                }
+            }
+        } else {
+            out.push_str(word);
+        }
+        word.clear();
+    };
+    for c in s.chars() {
+        if c.is_alphabetic() {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
 /// Light Russian typography cleanup on model output.
 pub fn tidy_russian(s: &str) -> String {
     // Models copy full-width CJK punctuation from the source («справиться！»);
@@ -454,7 +502,7 @@ pub fn tidy_russian(s: &str) -> String {
             t = t.replace(from, to);
         }
     }
-    let mut t = t.trim().to_string();
+    let mut t = fix_mixed_words(t.trim());
     t = t.replace("...", "…");
     // Dialogue dash at line start.
     if let Some(rest) = t.strip_prefix("- ") {
@@ -551,6 +599,12 @@ mod tests {
         // Ordinary text and short shouts stay as they are.
         assert_eq!(sentence_case_en("You're late again, Jin-woo."), "You're late again, Jin-woo.");
         assert_eq!(sentence_case_en("OK!"), "OK!");
+    }
+
+    #[test]
+    fn half_latin_words_are_spelled_in_russian() {
+        assert_eq!(tidy_russian("Оppa, у тебя завтра есть время?"), "Оппа, у тебя завтра есть время?");
+        assert_eq!(tidy_russian("Это OK, Jin-woo."), "Это OK, Jin-woo.");
     }
 
     #[test]
