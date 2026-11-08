@@ -65,7 +65,9 @@ pub fn is_label_line(text: &str, lang: manga_core::lang::Lang, tr: &Translator) 
 pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) -> Vec<InterfaceItem> {
     let kept: Vec<&OcrLine> = lines.iter().filter(|l| is_label_line(&l.text, lang, tr)).collect();
     let rects: Vec<Rect> = kept.iter().map(|l| l.rect).collect();
-    let groups = layout::group_lines(&rects);
+    // Lines inside one bubble outline are one bubble, whatever the spacing.
+    let outlines: Vec<Rect> = manga_core::bubbles::find(frame).into_iter().map(|f| f.outer).collect();
+    let groups = layout::group_in_outlines(&rects, &outlines);
     let items: Vec<InterfaceItem> = groups
         .iter()
         .map(|g| {

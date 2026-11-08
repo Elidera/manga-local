@@ -115,6 +115,27 @@ def main(out):
     vbubble(d, (260, 330), ["遅いぞ", "早く来い"], vf)
     vbubble(d, (650, 1020), ["約束だからね", "絶対だよ"], vf)
     img.save(out / "manga_ja_vertical.png")
+    # Hard grouping: two bubbles touching each other with lines at the same
+    # height (proximity alone merges them) and a bubble with a wide gap between
+    # its two lines (proximity alone splits it).
+    img = page([], KO_FONT, "Chapter 13", 3)
+    d = ImageDraw.Draw(img)
+    f = ImageFont.truetype(KO_FONT, 34)
+    def ell(box):
+        d.ellipse(box, fill=(255, 255, 255), outline=(0, 0, 0), width=4)
+    def line(cx, y, t):
+        b = d.textbbox((0, 0), t, font=f)
+        d.text((cx - (b[2] - b[0]) // 2 - b[0], y - b[1]), t, font=f, fill=(10, 10, 10))
+    ell((90, 120, 470, 330))
+    ell((470, 120, 900, 330))
+    line(280, 185, "어디 가?")
+    line(280, 235, "같이 가자.")
+    line(685, 185, "싫어. 혼자")
+    line(685, 235, "갈 거야.")
+    ell((260, 820, 740, 1180))
+    line(500, 900, "잠깐만…")
+    line(500, 1060, "할 말이 있어.")
+    img.save(out / "manhwa_ko_close.png")
 
 
 if __name__ == "__main__":
