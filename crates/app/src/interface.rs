@@ -79,7 +79,15 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
             // Look at the paper a little outside the text: flat = a bubble (fill
             // with its colour), varied = text over artwork (dark plate).
             let (bg, spread) = frame.ring_stats(&rect, (line_h * 0.35).clamp(3.0, 14.0));
-            InterfaceItem { fg: contrast_text(bg), busy: spread > 28.0, bg, rect, src, dst: None, line_h, lines: g.len() }
+            // More than a quarter of the ring is not the paper colour: artwork.
+            let busy = spread > 25.0;
+            // Clean the original: the letters filled from their neighbours.
+            let patch = wuxia_core::clean::clean_text(frame, &rect, line_h, bg);
+            let fg = match &patch {
+                Some(p) if busy => contrast_text(p.mean_rgb()),
+                _ => contrast_text(bg),
+            };
+            InterfaceItem { fg, busy, bg, rect, src, dst: None, line_h, lines: g.len(), patch: patch.map(Arc::new) }
         })
         .filter(|it| !it.src.is_empty())
         .collect();
@@ -266,6 +274,7 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
         .take(cfg.interface.max_lines)
         .map(|mut it| {
             it.rect = it.rect.offset(full.x as f32, full.y as f32); // to screen coordinates
+            it.patch = it.patch.take().map(|p| Arc::new((*p).clone().offset(full.x, full.y)));
             it
         })
         .collect();

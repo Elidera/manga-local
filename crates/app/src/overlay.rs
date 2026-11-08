@@ -61,6 +61,17 @@ struct Look {
     outline: bool,
 }
 
+/// The cleaning picture of a bubble; compared by identity (it is rebuilt only
+/// with a new page), so the 30-a-second scene comparison stays cheap.
+#[derive(Debug, Clone)]
+struct PatchRef(Arc<wuxia_core::clean::Patch>);
+
+impl PartialEq for PatchRef {
+    fn eq(&self, o: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &o.0)
+    }
+}
+
 /// What should be on screen, independent of pixels. Re-rendered only when it changes.
 #[derive(Debug, Clone, PartialEq)]
 enum El {
@@ -69,7 +80,8 @@ enum El {
     /// Page translation: Russian text painted over the original one — a single
     /// line label, or a speech bubble with the text wrapped inside (`lines` ≥ 2
     /// or text too long for one line). `line_h` = original line height, px.
-    Label { rect: [f32; 4], text: String, bg: [u8; 3], fg: [u8; 3], plate: bool, font_scale: f32, line_h: f32, lines: usize },
+    /// `patch`: the original cleaned away (see `wuxia_core::clean`); then no fill is drawn.
+    Label { rect: [f32; 4], text: String, bg: [u8; 3], fg: [u8; 3], plate: bool, font_scale: f32, line_h: f32, lines: usize, patch: Option<PatchRef>, outline: bool },
     /// Interface Mode "list": all labels in one box on the right.
     List { text: String },
     /// «Своё окно»: all current lines inside the user's box (speaker, text, still translating).
@@ -142,15 +154,21 @@ fn scene(u: &UiState, cfg: &Config, screen: (f32, f32), scale: f32) -> Vec<El> {
                             continue;
                         }
                     }
+                    // «replace»: the original is cleaned away (paper over the letters,
+                    // artwork filled in); «backdrop»: a dark plate as before.
+                    let backdrop = cfg.interface.mode == "backdrop";
+                    let patch = if backdrop { None } else { it.patch.clone().map(PatchRef) };
                     out.push(El::Label {
                         rect: [it.rect.x, it.rect.y, it.rect.w, it.rect.h],
                         text: dst.clone(),
                         bg: it.bg,
                         fg: it.fg,
-                        plate: it.busy || cfg.interface.mode == "backdrop",
+                        plate: backdrop || (it.busy && patch.is_none()),
                         font_scale: cfg.interface.font_scale,
                         line_h: it.line_h,
                         lines: it.lines,
+                        outline: it.busy && patch.is_some(),
+                        patch,
                     });
                 }
             }
@@ -233,12 +251,25 @@ struct Op {
     /// Plain rectangles drawn over the fill (frame and handles of the edited box).
     extras: Vec<[i32; 4]>,
     extra_color: Rgba,
+    /// Laid first: the cleaned original under the translation.
+    patch: Option<Arc<wuxia_core::clean::Patch>>,
 }
 
 impl Op {
     fn new(rect: [i32; 4], fill: Rgba, radius: f32, texts: Vec<TextJob>) -> Op {
-        Op { rect, fill, radius, texts, extras: Vec::new(), extra_color: Rgba(0, 0, 0, 0) }
+        Op { rect, fill, radius, texts, extras: Vec::new(), extra_color: Rgba(0, 0, 0, 0), patch: None }
     }
+}
+
+/// Text over filled-in artwork gets a thin outline of the opposite colour
+/// (like lettering on a picture) so it reads on any background.
+fn text_outline(on: bool, fg: &[u8; 3], s: f32) -> Option<(Rgba, i32)> {
+    if !on {
+        return None;
+    }
+    let dark = (fg[0] as u32 + fg[1] as u32 + fg[2] as u32) < 384;
+    let c = if dark { Rgba(255, 255, 255, 230) } else { Rgba(0, 0, 0, 230) };
+    Some((c, (1.5 * s).round().max(1.0) as i32))
 }
 
 const PARA: DRAW_TEXT_FORMAT = DRAW_TEXT_FORMAT(DT_CENTER.0 | DT_WORDBREAK.0 | DT_NOPREFIX.0);
@@ -378,7 +409,7 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
             op.extra_color = Rgba(232, 184, 92, 255);
             Some(op)
         }
-        El::Label { rect, text, bg, fg, plate, font_scale, line_h, lines } if *lines >= 2 || {
+        El::Label { rect, text, bg, fg, plate, font_scale, line_h, lines, patch, outline } if *lines >= 2 || {
             // A one-line label whose translation does not fit on one line is
             // wrapped like a bubble too.
             let px = (rect[3] * font_scale).clamp(9.0 * s, 64.0 * s);
@@ -405,13 +436,17 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
             let cover = [cx as i32 - cw / 2, cy as i32 - ch / 2, cw, ch];
             let (fill, color, radius) = if *plate {
                 (Rgba(12, 12, 14, 230), Rgba(245, 240, 225, 255), 6.0 * s)
+            } else if patch.is_some() {
+                (Rgba(0, 0, 0, 0), Rgba(fg[0], fg[1], fg[2], 255), 0.0)
             } else {
                 (Rgba(bg[0], bg[1], bg[2], 255), Rgba(fg[0], fg[1], fg[2], 255), (lh * 0.5).min(16.0 * s))
             };
-            let job = TextJob { text: text.clone(), px, bold: false, flags: PARA, x: cx as i32 - tw / 2, y: cy as i32 - th / 2, w: tw + 2, h: th, color, outline: None };
-            Some(Op::new(cover, fill, radius, vec![job]))
+            let job = TextJob { text: text.clone(), px, bold: false, flags: PARA, x: cx as i32 - tw / 2, y: cy as i32 - th / 2, w: tw + 2, h: th, color, outline: text_outline(*outline, fg, s) };
+            let mut op = Op::new(cover, fill, radius, vec![job]);
+            op.patch = patch.clone().map(|p| p.0);
+            Some(op)
         }
-        El::Label { rect, text, bg, fg, plate, font_scale, .. } => {
+        El::Label { rect, text, bg, fg, plate, font_scale, patch, outline, .. } => {
             let [x, y, w, h] = *rect;
             let mut px = (h * font_scale).clamp(9.0 * s, 64.0 * s);
             let (mut tw, mut th) = g.measure(text, px as i32, false, LINE, 10_000);
@@ -425,6 +460,8 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
             let cover = [x as i32 - m, y as i32 - m, (w as i32).max(tw) + 2 * m, h as i32 + 2 * m];
             let (fill, color, radius) = if *plate {
                 (Rgba(12, 12, 14, 230), Rgba(245, 240, 225, 255), 4.0 * s)
+            } else if patch.is_some() {
+                (Rgba(0, 0, 0, 0), Rgba(fg[0], fg[1], fg[2], 255), 0.0)
             } else {
                 (Rgba(bg[0], bg[1], bg[2], 255), Rgba(fg[0], fg[1], fg[2], 255), 1.0)
             };
@@ -438,9 +475,11 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
                 w: tw + 2,
                 h: th,
                 color,
-                outline: None,
+                outline: text_outline(*outline, fg, s),
             };
-            Some(Op::new(cover, fill, radius, vec![job]))
+            let mut op = Op::new(cover, fill, radius, vec![job]);
+            op.patch = patch.clone().map(|p| p.0);
+            Some(op)
         }
         El::List { text } => {
             let px = (15.0 * s) as i32;
@@ -831,7 +870,11 @@ impl Window {
         let scale = self.scale().max(screen.1 as f32 / 1080.0);
         let sf = (screen.0 as f32, screen.1 as f32);
         let ops: Vec<Op> = els.iter().filter_map(|e| layout(e, &mut self.gdi, scale, sf)).collect();
-        let rects: Vec<[i32; 4]> = ops.iter().map(|o| o.rect).collect();
+        let rects: Vec<[i32; 4]> = ops
+            .iter()
+            .map(|o| o.rect)
+            .chain(ops.iter().filter_map(|o| o.patch.as_ref().map(|p| [p.x, p.y, p.w, p.h])))
+            .collect();
         let Some([bx, by, bw, bh]) = raster::union_rect(&rects, screen) else {
             self.hide();
             return rects;
@@ -851,6 +894,9 @@ impl Window {
                 let buf = std::slice::from_raw_parts_mut(bits, (bw * bh * 4) as usize);
                 let mut c = Canvas::new(bw, bh, buf);
                 for (o, ms) in ops.iter().zip(&masks) {
+                    if let Some(p) = &o.patch {
+                        c.draw_image(&p.bgra, p.w, p.h, p.x - bx, p.y - by);
+                    }
                     c.fill_round_rect(o.rect[0] - bx, o.rect[1] - by, o.rect[2], o.rect[3], o.radius, o.fill);
                     for e in &o.extras {
                         c.fill_round_rect(e[0] - bx, e[1] - by, e[2], e[3], 0.0, o.extra_color);
@@ -905,8 +951,6 @@ impl Window {
     }
 }
 
-/// Start the overlay thread. It polls the shared state ~30 times a second and
-/// redraws only when what should be shown has changed.
 /// Make the fonts shipped in `fonts\` usable by this program only (nothing is
 /// installed into Windows).
 fn load_bundled_fonts(dir: &std::path::Path) {
@@ -922,6 +966,8 @@ fn load_bundled_fonts(dir: &std::path::Path) {
     }
 }
 
+/// Start the overlay thread. It polls the shared state ~30 times a second and
+/// redraws only when what should be shown has changed.
 pub fn spawn(shared: Arc<Shared>) {
     let _ = SHARED.set(shared.clone());
     load_bundled_fonts(&shared.paths.bundled_fonts_dir());

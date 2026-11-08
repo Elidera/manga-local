@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::paths::Paths;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
 use wuxia_core::image::Rect;
 
@@ -138,6 +138,9 @@ pub struct InterfaceItem {
     pub line_h: f32,
     /// How many OCR lines the bubble had (1 = a single label).
     pub lines: usize,
+    /// Picture laid under the translation (screen px): the letters covered
+    /// with paper in a bubble, or the background filled in over artwork.
+    pub patch: Option<Arc<wuxia_core::clean::Patch>>,
 }
 
 #[derive(Debug, Clone, Default)]

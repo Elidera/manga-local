@@ -186,9 +186,11 @@ impl Frame {
         [med(&mut rs), med(&mut gs), med(&mut bs)]
     }
 
-    /// Median colour and luminance spread of a ring `pad` px outside `r`.
-    /// Inside a speech bubble the ring is flat paper (spread ≈ 0) even though
-    /// the text itself is black on white; text over artwork gives a large spread.
+    /// Median colour of a ring `pad` px outside `r`, and how much of the ring
+    /// is *not* that colour (per cent). Inside a speech bubble the ring is flat
+    /// paper (≈ 0 %) even though the text itself is black on white; text over
+    /// artwork gives a large share. The corners of the ring are left out:
+    /// bubbles are round, and there the ring would reach past the outline.
     pub fn ring_stats(&self, r: &Rect, pad: f32) -> ([u8; 3], f32) {
         let x0 = (r.x - pad).max(0.0) as u32;
         let y0 = (r.y - pad).max(0.0) as u32;
@@ -197,14 +199,18 @@ impl Frame {
         if x1 <= x0 || y1 <= y0 {
             return ([0, 0, 0], 0.0);
         }
+        let (cx, cy) = ((x1 - x0) / 5, (y1 - y0) / 5);
         let mut px: Vec<[u8; 4]> = Vec::new();
-        for x in (x0..=x1).step_by(2) {
+        for x in (x0 + cx..=x1 - cx).step_by(2) {
             px.push(self.px(x, y0));
             px.push(self.px(x, y1));
         }
-        for y in (y0..=y1).step_by(2) {
+        for y in (y0 + cy..=y1 - cy).step_by(2) {
             px.push(self.px(x0, y));
             px.push(self.px(x1, y));
+        }
+        if px.is_empty() {
+            return ([0, 0, 0], 0.0);
         }
         let ch = |i: usize| {
             let mut v: Vec<u8> = px.iter().map(|p| p[i]).collect();
@@ -212,10 +218,11 @@ impl Frame {
             v[v.len() / 2]
         };
         let (b, g, r_) = (ch(0), ch(1), ch(2));
-        let l: Vec<f64> = px.iter().map(|p| luma(p[0], p[1], p[2]) as f64).collect();
-        let m = l.iter().sum::<f64>() / l.len() as f64;
-        let sd = (l.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / l.len() as f64).sqrt() as f32;
-        ([r_, g, b], sd)
+        let off = px
+            .iter()
+            .filter(|p| (p[0] as i32 - b as i32).abs() + (p[1] as i32 - g as i32).abs() + (p[2] as i32 - r_ as i32).abs() > 60)
+            .count();
+        ([r_, g, b], off as f32 * 100.0 / px.len() as f32)
     }
 
     /// Standard deviation of luminance inside `r` — high means busy background,
@@ -295,6 +302,6 @@ mod tests {
         assert!(f.busyness(&text) > 30.0, "inside the text it looks busy");
         let (c, sd) = f.ring_stats(&text, 4.0);
         assert_eq!(c, [255, 255, 255]);
-        assert!(sd < 1.0);
+        assert!(sd < 1.0, "no ring pixel differs from the paper");
     }
 }

@@ -84,6 +84,22 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// Lay a straight-alpha BGRA picture (`w * h * 4` bytes) at (x, y).
+    pub fn draw_image(&mut self, img: &[u8], w: i32, h: i32, x: i32, y: i32) {
+        if w <= 0 || h <= 0 || img.len() < (w * h * 4) as usize {
+            return;
+        }
+        for iy in 0..h {
+            for ix in 0..w {
+                let i = ((iy * w + ix) * 4) as usize;
+                let a = img[i + 3];
+                if a != 0 {
+                    self.blend(x + ix, y + iy, Rgba(img[i + 2], img[i + 1], img[i], a), 1.0);
+                }
+            }
+        }
+    }
+
     /// Text with a dark outline (game-subtitle look): the mask is stamped in
     /// `shadow` around the position, then in `c` on top.
     #[allow(clippy::too_many_arguments)]

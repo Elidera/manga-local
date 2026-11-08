@@ -6,6 +6,7 @@
 
 pub mod bundle;
 pub mod cache;
+pub mod clean;
 pub mod detect;
 pub mod fixes;
 pub mod glossary;
