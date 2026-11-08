@@ -118,6 +118,14 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h
     };
+    // Outside every bubble Windows OCR often reads artwork as letters («も。〇き朝。»
+    // from drawn circles): such lines stay only when they look like real text.
+    items.retain(|it| {
+        found.iter().any(|f| inside(&it.rect, &f.outer)) || {
+            let japanese = it.src.chars().filter(|&c| wuxia_core::text::is_kana(c) || wuxia_core::text::is_han(c)).count();
+            japanese >= 4 && !it.src.contains(['〇', '○', '◯'])
+        }
+    });
     // Horizontal bubbles Windows OCR has read stay its own (faster, as good).
     let todo: Vec<wuxia_core::bubbles::Found> = found.into_iter().filter(|f| f.vertical || !items.iter().any(|it| inside(&it.rect, &f.outer))).collect();
     if todo.is_empty() {
