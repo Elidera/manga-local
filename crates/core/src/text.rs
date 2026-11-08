@@ -385,6 +385,49 @@ pub fn count_ru(n: usize, one: &str, few: &str, many: &str) -> String {
     format!("{n} {word}")
 }
 
+/// Comic lettering is usually ALL CAPS ("YOU'RE LATE AGAIN."). Models translate
+/// shouting capitals worse and some answer in capitals too, so a mostly-capital
+/// English text becomes ordinary sentence case: "You're late again." Words
+/// joined by a hyphen keep the capital only at the start ("Jin-woo").
+/// Text that is not mostly capitals is returned unchanged.
+pub fn sentence_case_en(s: &str) -> String {
+    let letters = s.chars().filter(|c| c.is_ascii_alphabetic()).count();
+    let upper = s.chars().filter(|c| c.is_ascii_uppercase()).count();
+    if letters < 4 || (upper as f32) < letters as f32 * 0.8 {
+        return s.to_string();
+    }
+    let lower = s.to_lowercase();
+    let mut out = String::with_capacity(s.len());
+    let mut start = true; // the next letter begins a sentence
+    for c in lower.chars() {
+        if start && c.is_alphabetic() {
+            out.extend(c.to_uppercase());
+            start = false;
+        } else {
+            out.push(c);
+        }
+        if matches!(c, '.' | '!' | '?' | '…') {
+            start = true;
+        } else if c.is_alphanumeric() {
+            start = false;
+        }
+    }
+    // The pronoun "I" and its contractions stay capital.
+    let words: Vec<String> = out
+        .split(' ')
+        .map(|w| {
+            let core = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '’');
+            let is_i = matches!(core, "i" | "i'm" | "i'll" | "i've" | "i'd" | "i’m" | "i’ll" | "i’ve" | "i’d");
+            if is_i {
+                w.replacen('i', "I", 1)
+            } else {
+                w.to_string()
+            }
+        })
+        .collect();
+    words.join(" ")
+}
+
 /// Light Russian typography cleanup on model output.
 pub fn tidy_russian(s: &str) -> String {
     // Models copy full-width CJK punctuation from the source («справиться！»);
@@ -497,6 +540,17 @@ mod tests {
     fn joins_two_line_subtitle() {
         assert_eq!(join_lines(&["此去开封", "路途遥远"]), "此去开封路途遥远");
         assert_eq!(join_lines(&["Press", "F to talk"]), "Press F to talk");
+    }
+
+    #[test]
+    fn comic_capitals_become_sentence_case() {
+        assert_eq!(sentence_case_en("YOU'RE LATE AGAIN. THE GATE OPENS IN TEN MINUTES."), "You're late again. The gate opens in ten minutes.");
+        assert_eq!(sentence_case_en("JIN-WOO! WAIT UP!"), "Jin-woo! Wait up!");
+        assert_eq!(sentence_case_en("I KNOW, I KNOW... I'M SORRY!"), "I know, I know... I'm sorry!");
+        assert_eq!(sentence_case_en("...WHAT?! NO WAY."), "...What?! No way.");
+        // Ordinary text and short shouts stay as they are.
+        assert_eq!(sentence_case_en("You're late again, Jin-woo."), "You're late again, Jin-woo.");
+        assert_eq!(sentence_case_en("OK!"), "OK!");
     }
 
     #[test]

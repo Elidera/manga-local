@@ -1,0 +1,8 @@
+# Нарисованная страница английского перевода манхвы (tools/screens/make_pages.py):
+# текст заглавными буквами — программа приводит его к обычному регистру.
+lang	en
+bubbles	4
+bubble	Jin-woo! Wait up!
+bubble	You're late again. The gate opens in ten minutes.
+bubble	I know, I know... The bus never came.
+bubble	Let's go. This time we clear it together.

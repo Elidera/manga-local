@@ -1,7 +1,8 @@
 """Draw synthetic manga / manhwa pages for the screenshot tests (tests/screens).
 
 Original pictures: grey panels with noise as "artwork", white speech bubbles
-with Korean or Japanese text, a Latin chapter caption that must be ignored.
+with Korean, Japanese or English (capital lettering) text; the Korean and
+Japanese pages have a Latin chapter caption that must be ignored.
 Run:  python tools/screens/make_pages.py tests/screens
 Needs Pillow and fonts with Hangul and kana (WenQuanYi Zen Hei, IPAGothic).
 """
@@ -14,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 KO_FONT = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
 JA_FONT = "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf"
 LATIN_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+COMIC_FONT = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 
 
 def panel(d, box, seed):
@@ -46,15 +48,16 @@ def bubble(d, center, lines, font, pad=(46, 34)):
         y += lh + gap
 
 
-def page(bubbles, font_path, caption, seed):
+def page(bubbles, font_path, caption, seed, size=34):
     img = Image.new("RGB", (1000, 1400), (255, 255, 255))
     d = ImageDraw.Draw(img)
     panel(d, (40, 40, 960, 640), seed)
     panel(d, (40, 700, 960, 1360), seed + 1)
-    font = ImageFont.truetype(font_path, 34)
+    font = ImageFont.truetype(font_path, size)
     for center, lines in bubbles:
         bubble(d, center, lines, font)
-    d.text((60, 1300), caption, font=ImageFont.truetype(LATIN_FONT, 30), fill=(255, 255, 255), stroke_width=3, stroke_fill=(0, 0, 0))
+    if caption:
+        d.text((60, 1300), caption, font=ImageFont.truetype(LATIN_FONT, 30), fill=(255, 255, 255), stroke_width=3, stroke_fill=(0, 0, 0))
     return img
 
 
@@ -76,6 +79,15 @@ def main(out):
         ((330, 1160), ["大丈夫？", "顔、真っ赤だよ。"]),
     ]
     page(ja, JA_FONT, "Episode 3", 7).save(out / "manga_ja_station.png")
+    # English scanlations are lettered in capitals; a name with a hyphen, a
+    # three-line bubble.
+    en = [
+        ((300, 170), ["JIN-WOO! WAIT UP!"]),
+        ((640, 450), ["YOU'RE LATE AGAIN.", "THE GATE OPENS IN", "TEN MINUTES."]),
+        ((330, 870), ["I KNOW, I KNOW...", "THE BUS NEVER CAME."]),
+        ((620, 1150), ["LET'S GO. THIS TIME WE", "CLEAR IT TOGETHER."]),
+    ]
+    page(en, COMIC_FONT, None, 11, size=32).save(out / "webtoon_en_gate.png")
 
 
 if __name__ == "__main__":

@@ -71,7 +71,10 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
         .map(|g| {
             let rect = layout::block_rect(&rects, g);
             let texts: Vec<&str> = g.iter().map(|&i| kept[i].text.as_str()).collect();
-            let src = tr.fix_ocr(&wuxia_core::text::join_lines_for(&texts, lang));
+            let mut src = tr.fix_ocr(&wuxia_core::text::join_lines_for(&texts, lang));
+            if lang == Lang::En {
+                src = wuxia_core::text::sentence_case_en(&src);
+            }
             let line_h = g.iter().map(|&i| rects[i].h).sum::<f32>() / g.len() as f32;
             // Look at the paper a little outside the text: flat = a bubble (fill
             // with its colour), varied = text over artwork (dark plate).

@@ -42,6 +42,11 @@ fn japanese_assets() {
 }
 
 #[test]
+fn english_assets() {
+    check(include_str!("../../../assets/glossary/60_comics_en.tsv"), include_str!("../../../assets/bench/en_lines.txt"), Lang::En, 10);
+}
+
+#[test]
 fn chinese_assets() {
     // Chinese lines are classical wuxia speech; the idiom glossary is small and optional.
     let mut g = Glossary::new();

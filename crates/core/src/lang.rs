@@ -171,8 +171,9 @@ fn suspicious_word(w: &str) -> bool {
             return true;
         }
     }
-    // Capital look-alikes of Cyrillic letters: "CTOVIJIO", "MOTOUVIKJI".
-    w.contains("IJ") || w.contains("JI")
+    // Capital look-alikes of Cyrillic letters: "CTOVIJIO" (Ы, Л). "JI" alone is
+    // not enough: comics are lettered in capitals ("JI-HO", "JIN-WOO").
+    w.contains("IJ")
 }
 
 /// Share of words that look like misread Cyrillic (see `suspicious_word`).
@@ -307,7 +308,6 @@ mod tests {
             ", — 3TO Toro CTOVIJIO.",
             "nv10Hep",
             "CTopa",
-            "MOTOUVIKJI",
             "06Haw6 LW6TMTn6",
         ] {
             assert!(!is_subtitle(s, Lang::En), "{s}");
@@ -327,6 +327,10 @@ mod tests {
         assert!(is_label("Inventory", Lang::En));
         assert!(is_label("Lv. 70", Lang::En) == false);
         assert!(is_label("Go", Lang::En));
+        // Comic lettering: capitals, Korean names.
+        assert!(is_label("JIN-WOO! WAIT UP!", Lang::En));
+        assert!(is_label("YOU'RE LATE AGAIN.", Lang::En));
+        assert!(is_label("JIHO?!", Lang::En));
         assert!(!is_label("XP", Lang::En));
     }
 }
