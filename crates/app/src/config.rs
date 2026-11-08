@@ -274,6 +274,22 @@ impl Default for Llm {
     }
 }
 
+/// The model to suggest for a video card with `vram_gb` of memory: Gemma 4
+/// E4B (≈5 GB plus room for the page) from ~7 GB, Hy-MT2 1.8B below.
+pub fn recommended_model(vram_gb: f32) -> &'static str {
+    if vram_gb >= 6.5 {
+        "gemma4-e4b"
+    } else {
+        "hymt2-1.8b"
+    }
+}
+
+/// Will a model of `size_gb` fit into the video card (with ~1.2 GB for the
+/// context and the picture on screen)?
+pub fn fits_gpu(size_gb: f32, vram_gb: f32) -> bool {
+    vram_gb <= 0.0 || size_gb + 1.2 <= vram_gb
+}
+
 pub fn default_models() -> Vec<ModelPreset> {
     vec![
         ModelPreset {
@@ -379,6 +395,7 @@ impl Config {
     /// Load the user config; on first run copy the bundled default, falling back to built-ins.
     pub fn load(paths: &Paths) -> anyhow::Result<Config> {
         let p = paths.config();
+        let first_run = !p.exists();
         if !p.exists() {
             if paths.default_config().exists() {
                 std::fs::copy(paths.default_config(), &p)?;
@@ -403,6 +420,15 @@ impl Config {
             }
         }
         cfg.apply_profile();
+        // First start: the best model the video card can hold.
+        if first_run {
+            let id = recommended_model(crate::win::vram_gb());
+            if cfg.llm.active_model != id && cfg.models.iter().any(|m| m.id == id) {
+                tracing::info!("первый запуск: видеопамять {:.1} ГБ → модель {id}", crate::win::vram_gb());
+                cfg.llm.active_model = id.into();
+                let _ = cfg.save(paths);
+            }
+        }
         // Configs from before the bundled comic font: switch the old default
         // once (a font the reader chose is kept).
         if !cfg.general.comic_font_set {

@@ -536,14 +536,35 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
         let mut active = cfg.llm.active_model.clone();
         let current = cfg.active_model();
         egui::ComboBox::from_label("").selected_text(&current.name).width(ui.available_width() - 4.0).show_ui(ui, |ui| {
+            let vram = crate::win::vram_gb();
             for m in &cfg.models {
                 let downloaded = !m.path.is_empty() && std::path::Path::new(&m.path).exists();
-                let label = if downloaded { m.name.clone() } else { format!("{}  · скачается {:.1} ГБ", m.name, m.size_gb) };
+                let mut label = if downloaded { m.name.clone() } else { format!("{}  · скачается {:.1} ГБ", m.name, m.size_gb) };
+                if m.size_gb > 0.0 && !crate::config::fits_gpu(m.size_gb, vram) {
+                    label.push_str("  · ⚠ может не поместиться в видеокарту");
+                }
                 ui.selectable_value(&mut active, m.id.clone(), label);
             }
         });
         if active != cfg.llm.active_model {
             shared.send(Command::SwitchModel(active));
+        }
+        // What this PC can run.
+        match crate::win::gpu() {
+            Some((name, mem)) => {
+                let gb = mem as f32 / 1_073_741_824.0;
+                let rec = crate::config::recommended_model(gb);
+                let rec_name = cfg.models.iter().find(|m| m.id == rec).map(|m| m.name.split(" — ").next().unwrap_or(&m.name).to_string()).unwrap_or_default();
+                let text = if current.id == rec {
+                    format!("Ваша видеокарта: {name}, {gb:.0} ГБ — выбрана подходящая модель.")
+                } else if !crate::config::fits_gpu(current.size_gb, gb) {
+                    format!("Ваша видеокарта: {name}, {gb:.0} ГБ — этой модели может не хватить памяти, перевод будет медленным. Советуем {rec_name}.")
+                } else {
+                    format!("Ваша видеокарта: {name}, {gb:.0} ГБ — советуем {rec_name}.")
+                };
+                hint(ui, &text);
+            }
+            None => hint(ui, "Видеокарта не найдена — перевод пойдёт на процессоре; советуем Hy-MT2 1.8B."),
         }
         hint(
             ui,

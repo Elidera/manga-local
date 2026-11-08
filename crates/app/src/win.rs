@@ -35,6 +35,39 @@ pub fn hard_exit(code: i32) -> ! {
     std::process::exit(code)
 }
 
+/// The video card with the most own memory: (name, memory in bytes). None
+/// when there is none (or only Windows' software adapter).
+pub fn gpu() -> Option<(String, u64)> {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+    static CACHE: std::sync::OnceLock<Option<(String, u64)>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| unsafe {
+            let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+            let mut best: Option<(String, u64)> = None;
+            let mut i = 0;
+            while let Ok(a) = factory.EnumAdapters1(i) {
+                i += 1;
+                let Ok(d) = a.GetDesc1() else { continue };
+                if d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+                    continue;
+                }
+                let len = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
+                let name = String::from_utf16_lossy(&d.Description[..len]).trim().to_string();
+                let mem = d.DedicatedVideoMemory as u64;
+                if best.as_ref().map_or(true, |b| mem > b.1) {
+                    best = Some((name, mem));
+                }
+            }
+            best
+        })
+        .clone()
+}
+
+/// Video memory in GB (0 without a video card).
+pub fn vram_gb() -> f32 {
+    gpu().map_or(0.0, |(_, m)| m as f32 / 1_073_741_824.0)
+}
+
 pub fn local_date_time() -> (String, String) {
     let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     (format!("{:04}-{:02}-{:02}", t.wYear, t.wMonth, t.wDay), format!("{:02}:{:02}:{:02}", t.wHour, t.wMinute, t.wSecond))
