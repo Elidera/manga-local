@@ -24,6 +24,8 @@ struct Args {
     repeat: f32,
     no_think: bool,
     batch: bool,
+    /// Batch mode: give each page the last bubbles of the previous one as context.
+    context: bool,
     out: Option<String>,
     /// Game title for the prompt; also selects `<profile>_*.tsv` glossaries.
     game: String,
@@ -43,6 +45,7 @@ fn parse_args() -> Args {
         repeat: 1.05,
         no_think: false,
         batch: false,
+        context: false,
         out: None,
         game: String::new(),
         profile: "browser".into(),
@@ -71,6 +74,11 @@ fn parse_args() -> Args {
             }
             "--batch" => {
                 a.batch = true;
+                i += 1;
+                continue;
+            }
+            "--context" => {
+                a.context = true;
                 i += 1;
                 continue;
             }
@@ -144,8 +152,13 @@ fn md_escape(s: &str) -> String {
 /// the app's F8, with per-bubble fallback when the batch answer cannot be split.
 fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
     let style = PromptStyle::parse(&a.prompt);
-    let mut report = format!("## {} — страница (пакетами по 12 пузырей)\n\n| Пузырь | Перевод | способ |\n|---|---|---|\n", a.name);
+    let title = if a.context { "страница (пакетами по 12 пузырей, с предыдущей страницей)" } else { "страница (пакетами по 12 пузырей)" };
+    let mut report = format!("## {} — {title}\n\n| Пузырь | Перевод | способ |\n|---|---|---|\n", a.name);
     let (mut batches, mut batch_ok) = (0, 0);
+    // The last bubbles of the previous page (original, translation) and how
+    // often a context line leaked into an answer.
+    let mut prev: Vec<(String, String)> = Vec::new();
+    let mut leaks = 0;
     let t_all = Instant::now();
     for chunk in lines.chunks(12) {
         batches += 1;
@@ -157,7 +170,9 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
                 }
             }
         }
-        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue);
+        let ctx: Vec<(&str, &str)> = if a.context { prev.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect() } else { Vec::new() };
+        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue, &ctx);
+        let mut page: Vec<(String, String)> = Vec::new();
         let need: usize = chunk.iter().map(|s| s.chars().count() * 3 + 24).sum();
         let parts = chat_n(agent, a, &msgs, (need as u32 + 64).clamp(128, 3072))
             .map(|raw| {
@@ -173,7 +188,12 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
         }
         for (l, p) in chunk.iter().zip(parts) {
             if let Some(t) = p.as_ref().and_then(|p| prompt::clean_output(p, l).ok()) {
-                report.push_str(&format!("| {} | {} | пакет |\n", md_escape(l), md_escape(&t)));
+                let leaked = ctx.iter().any(|(_, c)| c.chars().count() > 6 && t.contains(c));
+                if leaked {
+                    leaks += 1;
+                }
+                report.push_str(&format!("| {} | {} | пакет{} |\n", md_escape(l), md_escape(&t), if leaked { " ⚠ повтор контекста" } else { "" }));
+                page.push((l.to_string(), t));
                 continue;
             }
             let inp = PromptInput {
@@ -190,12 +210,16 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
                 .and_then(|r| prompt::clean_output(&r, l).ok())
                 .unwrap_or_else(|| "⚠".into());
             report.push_str(&format!("| {} | {} | по одной |\n", md_escape(l), md_escape(&t)));
+            page.push((l.to_string(), t));
         }
+        let skip = page.len().saturating_sub(6);
+        prev = page.into_iter().skip(skip).collect();
     }
     report.push_str(&format!(
-        "\n**Итог:** пакетов {batch_ok}/{batches} разобрано полностью, всего {} мс на {} пузырей.\n\n",
+        "\n**Итог:** пакетов {batch_ok}/{batches} разобрано полностью, всего {} мс на {} пузырей{}.\n\n",
         t_all.elapsed().as_millis(),
-        lines.len()
+        lines.len(),
+        if a.context { format!(", повторов контекста {leaks}") } else { String::new() }
     ));
     println!("{report}");
     if let Some(p) = &a.out {

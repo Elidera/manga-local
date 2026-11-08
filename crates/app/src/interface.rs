@@ -117,6 +117,7 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
     }
     let session = SESSIONS.fetch_add(1, Ordering::SeqCst) + 1;
     READING.store(session, Ordering::SeqCst);
+    PAGE_CONTEXT.lock().unwrap().clear();
     let follow = shared.cfg().interface.auto_hide;
     let mut shown_at = crate::hotkeys::now_ms();
     // The first page now, while the panel is hidden for the picture.
@@ -329,7 +330,9 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     }
     let n_pending = unique.len();
     shared.ui(|u| u.interface = Some(InterfaceView { items, pending: n_pending, generation: gen }));
-    if !unique.is_empty() {
+    if unique.is_empty() {
+        remember_page(shared, gen);
+    } else {
         let (shared, tr) = (shared.clone(), tr.clone());
         let game = cfg.general.game_title.clone();
         tokio::spawn(async move { translate_bubbles(&shared, &tr, &preset, &game, gen, unique).await });
@@ -352,7 +355,29 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
             }
         })
     };
-    translate_texts(shared, tr, preset, game, unique, alive, set_result).await;
+    let context = if shared.cfg().interface.page_context { PAGE_CONTEXT.lock().unwrap().clone() } else { Vec::new() };
+    translate_texts(shared, tr, preset, game, unique, &context, alive, set_result).await;
+    if alive() {
+        remember_page(shared, gen);
+    }
+}
+
+/// The last bubbles of the page read before (original, translation), in
+/// reading order: context for the next page of the same reading session.
+static PAGE_CONTEXT: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Keep the last 6 translated bubbles of view `gen` as context for the next page.
+fn remember_page(shared: &Arc<Shared>, gen: u64) {
+    let pairs: Vec<(String, String)> = {
+        let u = shared.ui.lock().unwrap();
+        let Some(v) = u.interface.as_ref().filter(|v| v.generation == gen) else { return };
+        v.items.iter().filter_map(|it| it.dst.as_ref().filter(|d| **d != it.src).map(|d| (it.src.clone(), d.clone()))).collect()
+    };
+    if pairs.is_empty() {
+        return;
+    }
+    let skip = pairs.len().saturating_sub(6);
+    *PAGE_CONTEXT.lock().unwrap() = pairs.into_iter().skip(skip).collect();
 }
 
 /// Translate the bubbles of one page: the whole page in one call when it fits
@@ -366,6 +391,7 @@ pub async fn translate_texts(
     preset: &crate::config::ModelPreset,
     game: &str,
     unique: Vec<String>,
+    context: &[(String, String)],
     alive: impl Fn() -> bool,
     mut done: impl FnMut(&str, String),
 ) {
@@ -385,7 +411,7 @@ pub async fn translate_texts(
         let mut rest: Vec<String> = chunk.clone();
         if chunk.len() > 1 {
             let t0 = std::time::Instant::now();
-            match tr.translate_batch(preset, game, &chunk, TextKind::Dialogue).await {
+            match tr.translate_batch(preset, game, &chunk, TextKind::Dialogue, context).await {
                 Ok(out) => {
                     shared.ui(|u| u.stats.add_llm(t0.elapsed().as_millis() / chunk.len() as u128, false));
                     rest.clear();

@@ -517,7 +517,8 @@ impl Translator {
     /// answer cannot be split — the caller then falls back to one-by-one.
     /// Translate many texts of one screen in one request. `kind` = `Dialogue` for
     /// the bubbles of a page (in reading order), `Interface` for unrelated signs.
-    pub async fn translate_batch(&self, preset: &ModelPreset, game: &str, items: &[String], kind: TextKind) -> Result<Vec<Option<String>>> {
+    /// `context`: the last bubbles of the previous page (original, translation), shown to the model for reference.
+    pub async fn translate_batch(&self, preset: &ModelPreset, game: &str, items: &[String], kind: TextKind, context: &[(String, String)]) -> Result<Vec<Option<String>>> {
         if items.is_empty() {
             return Ok(vec![]);
         }
@@ -537,7 +538,9 @@ impl Translator {
             }
             terms.truncate(40);
             let refs: Vec<&str> = items.iter().map(String::as_str).collect();
-            prompt::build_batch(PromptStyle::parse(&preset.prompt), &refs, &terms, game, kind)
+            // A bubble still on screen is translated anew, not copied from the context.
+            let ctx: Vec<(&str, &str)> = context.iter().filter(|(s, _)| !items.contains(s)).map(|(s, t)| (s.as_str(), t.as_str())).collect();
+            prompt::build_batch(PromptStyle::parse(&preset.prompt), &refs, &terms, game, kind, &ctx)
         };
         let mut p = preset.clone();
         // Russian takes ~2–3 tokens per CJK character; bubbles are longer than labels.

@@ -167,6 +167,8 @@ pub struct Interface {
     /// The mouse over a bubble takes our translation away from it, so the
     /// original under it can be read.
     pub hover_original: bool,
+    /// Show the model the last bubbles of the previous page (who speaks, names, tone).
+    pub page_context: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,7 +352,7 @@ impl Default for Dialogue {
 
 impl Default for Interface {
     fn default() -> Self {
-        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true }
+        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true, page_context: true }
     }
 }
 

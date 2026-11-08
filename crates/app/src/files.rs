@@ -82,6 +82,8 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
     let total = ch.pages.len();
     tracing::info!("глава «{}»: {total} стр., язык {}", ch.name, lang.code());
     let mut done = 0;
+    // The last bubbles of the previous page, for the model's context.
+    let mut prev: Vec<(String, String)> = Vec::new();
     for (i, page) in ch.pages.iter().enumerate() {
         if STOP.load(Ordering::SeqCst) {
             out.finish()?;
@@ -126,10 +128,13 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
                 None => unique.push(it.src.clone()),
             }
         }
-        interface::translate_texts(shared, tr, &preset, &game, unique, || !STOP.load(Ordering::SeqCst), |src, dst| {
+        let context = if cfg.interface.page_context { prev.clone() } else { Vec::new() };
+        interface::translate_texts(shared, tr, &preset, &game, unique, &context, || !STOP.load(Ordering::SeqCst), |src, dst| {
             result.insert(src.to_string(), dst);
         })
         .await;
+        let pairs: Vec<(String, String)> = items.iter().filter_map(|it| result.get(&it.src).filter(|d| **d != it.src).map(|d| (it.src.clone(), d.clone()))).collect();
+        prev = pairs.into_iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
         progress("вписываю перевод");
         let bubbles: Vec<Bubble> = items
             .iter()

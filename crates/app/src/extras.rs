@@ -108,7 +108,7 @@ async fn retranslate_page(shared: Arc<Shared>, tr: Arc<Translator>, gen: u64, pa
     let srcs: Vec<String> = pairs.iter().map(|(s, _)| s.clone()).collect();
     let mut rest: Vec<String> = srcs.clone();
     if srcs.len() > 1 {
-        if let Ok(out) = tr.translate_batch(&preset, &game, &srcs, TextKind::Dialogue).await {
+        if let Ok(out) = tr.translate_batch(&preset, &game, &srcs, TextKind::Dialogue, &[]).await {
             rest.clear();
             for (src, dst) in srcs.iter().zip(out) {
                 match dst {

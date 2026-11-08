@@ -86,6 +86,13 @@ jobs:
                   --lines "assets/bench/${lang}_lines.txt" --glossary assets/glossary --out "reports/$id.$lang.md" || true
                 ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (${lang^^})" --prompt "$prompt" $extra --batch \
                   --lines "assets/bench/${lang}_lines.txt" --glossary assets/glossary --out "reports/$id.$lang.page.md" || true
+                # A connected story: pages with and without the previous page as context.
+                if [ -f "assets/bench/${lang}_story.txt" ]; then
+                  for ctx in "" "--context"; do
+                    ./target/release/manga-bench --server http://127.0.0.1:8848 --name "$name (${lang^^}, история)" --prompt "$prompt" $extra --batch $ctx \
+                      --lines "assets/bench/${lang}_story.txt" --glossary assets/glossary --out "reports/$id.$lang.story$ctx.md" || true
+                  done
+                fi
               fi
             done
             kill $pid; wait $pid 2>/dev/null || true
