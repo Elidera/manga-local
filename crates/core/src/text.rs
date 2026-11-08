@@ -387,7 +387,31 @@ pub fn count_ru(n: usize, one: &str, few: &str, many: &str) -> String {
 
 /// Light Russian typography cleanup on model output.
 pub fn tidy_russian(s: &str) -> String {
-    let mut t = s.trim().to_string();
+    // Models copy full-width CJK punctuation from the source («справиться！»);
+    // it carries no space after it, so one is added (doubles collapse below).
+    let mut t = String::with_capacity(s.len());
+    for c in s.trim().chars() {
+        match c {
+            '！' => t.push_str("! "),
+            '？' => t.push_str("? "),
+            '，' | '、' => t.push_str(", "),
+            '。' => t.push_str(". "),
+            '：' => t.push_str(": "),
+            '；' => t.push_str("; "),
+            '（' => t.push_str(" ("),
+            '）' => t.push_str(") "),
+            '～' => t.push('~'),
+            '　' => t.push(' '),
+            c => t.push(c),
+        }
+    }
+    // "! ?" from "！？" and spaces before closing marks are glued back.
+    for (from, to) in [("! ?", "!?"), ("? !", "?!"), ("! !", "!!"), ("? ?", "??"), (" )", ")"), ("( ", "("), (" ,", ","), (" .", "."), (") ?", ")?"), (") !", ")!"), (") .", ")."), (") ,", "),")] {
+        while t.contains(from) {
+            t = t.replace(from, to);
+        }
+    }
+    let mut t = t.trim().to_string();
     t = t.replace("...", "…");
     // Dialogue dash at line start.
     if let Some(rest) = t.strip_prefix("- ") {
@@ -473,6 +497,13 @@ mod tests {
     fn joins_two_line_subtitle() {
         assert_eq!(join_lines(&["此去开封", "路途遥远"]), "此去开封路途遥远");
         assert_eq!(join_lines(&["Press", "F to talk"]), "Press F to talk");
+    }
+
+    #[test]
+    fn fullwidth_punctuation_in_russian() {
+        assert_eq!(tidy_russian("Беги! Это не монстр, с которым мы справимся！"), "Беги! Это не монстр, с которым мы справимся!");
+        assert_eq!(tidy_russian("Брат，у тебя есть время？"), "Брат, у тебя есть время?");
+        assert_eq!(tidy_russian("Что？！Опять（снова）？"), "Что?! Опять (снова)?");
     }
 
     #[test]
