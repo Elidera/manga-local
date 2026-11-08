@@ -106,6 +106,44 @@ fn reading(session: u64) -> bool {
     READING.load(Ordering::SeqCst) == session
 }
 
+/// The bubbles of a page: from Windows OCR lines (`bubbles`), and — for
+/// Japanese with manga-ocr — bubbles found by the picture whose text Windows
+/// OCR could not read (vertical columns, handwriting) read by manga-ocr. Frame
+/// coordinates, reading order. Shared with chapter files and `--selftest`.
+pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Vec<InterfaceItem> {
+    let mut items = bubbles(lines, lang, tr, frame);
+    let Some(ja) = ja.filter(|_| lang == Lang::Ja) else { return items };
+    let found = wuxia_core::bubbles::find(frame);
+    let inside = |r: &wuxia_core::image::Rect, o: &wuxia_core::image::Rect| {
+        let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h
+    };
+    // Horizontal bubbles Windows OCR has read stay its own (faster, as good).
+    let todo: Vec<wuxia_core::bubbles::Found> = found.into_iter().filter(|f| f.vertical || !items.iter().any(|it| inside(&it.rect, &f.outer))).collect();
+    if todo.is_empty() {
+        return items;
+    }
+    let t0 = Instant::now();
+    let f2 = frame.clone();
+    let read: Vec<(wuxia_core::bubbles::Found, String)> = tokio::task::spawn_blocking(move || todo.into_iter().filter_map(|f| ja.read(&f2, &f.text).map(|t| (f, t))).collect()).await.unwrap_or_default();
+    tracing::info!(target: "interface", "manga-ocr: {} пузырей за {} мс", read.len(), t0.elapsed().as_millis());
+    for (f, text) in read {
+        items.retain(|it| !inside(&it.rect, &f.outer));
+        let src = tr.fix_ocr(&wuxia_core::text::normalize_for(&text, lang));
+        if src.is_empty() || tr.should_skip(&src) {
+            continue;
+        }
+        // Russian is written across: give it most of the bubble's width.
+        let cx = f.text.x + f.text.w / 2.0;
+        let w = (f.outer.w * 0.78).max(f.text.w);
+        let rect = wuxia_core::image::Rect { x: cx - w / 2.0, y: f.text.y, w, h: f.text.h };
+        let patch = wuxia_core::clean::clean_text(frame, &f.text, f.char_px, f.paper, true);
+        items.push(InterfaceItem { fg: contrast_text(f.paper), busy: false, bg: f.paper, rect, src, dst: None, line_h: f.char_px, lines: f.lines.max(2), patch: patch.map(Arc::new) });
+    }
+    let order = layout::reading_order(&items.iter().map(|it| it.rect).collect::<Vec<_>>(), true);
+    order.into_iter().map(|i| items[i].clone()).collect()
+}
+
 pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
     // Second press hides the translation and ends the reading mode.
     let showing = shared.ui.lock().unwrap().interface.is_some();
@@ -273,7 +311,9 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     }
     let ocr_ms = t0.elapsed().as_millis();
     let n_lines = lines.len();
-    let items: Vec<InterfaceItem> = bubbles(&lines, lang, tr, &frame)
+    let ja = crate::jaocr::engine(shared).await;
+    let items: Vec<InterfaceItem> = page_items(&lines, lang, tr, &frame, ja)
+        .await
         .into_iter()
         .take(cfg.interface.max_lines)
         .map(|mut it| {

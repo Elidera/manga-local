@@ -71,14 +71,14 @@ pub fn save_png(frame: &Frame, path: &Path) -> Result<()> {
 
 /// Run the real pipeline on one picture: the bubbles F8 would translate (and,
 /// for the old subtitle mode, its speech blocks). Returns (found, OCR time in ms).
-pub async fn analyse(frame: &Frame, lang: Lang, ocr: &Ocr, tr: &Translator) -> Result<(Found, u128)> {
+pub async fn analyse(frame: &Frame, lang: Lang, ocr: &Ocr, tr: &Translator, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Result<(Found, u128)> {
     let t0 = Instant::now();
     let lines = ocr.recognize(frame.clone(), 1, lang).await?;
     let ms = t0.elapsed().as_millis();
     let speech = crate::auto::speech_blocks(&lines, lang, tr).into_iter().map(|(t, _)| t).collect();
     let up = crate::interface::upscale_for(0, frame.height as i32);
     let label_lines = if up == 1 { lines } else { ocr.recognize(frame.clone(), up, lang).await? };
-    let bubbles = crate::interface::bubbles(&label_lines, lang, tr, frame).into_iter().map(|b| b.src).collect();
+    let bubbles = crate::interface::page_items(&label_lines, lang, tr, frame, ja).await.into_iter().map(|b| b.src).collect();
     let mut labels: Vec<String> = Vec::new();
     for l in label_lines {
         if crate::interface::is_label_line(&l.text, lang, tr) {
@@ -99,7 +99,9 @@ fn arg_after(args: &[String], key: &str) -> Option<String> {
 pub fn run_cli(args: &[String]) -> i32 {
     let dir = PathBuf::from(args.get(2).filter(|a| !a.starts_with("--")).cloned().unwrap_or_else(|| "tests/screens".into()));
     let out = arg_after(args, "--out").map(PathBuf::from).unwrap_or_else(|| dir.join("report.md"));
-    let (code, md) = match run(&dir) {
+    // `--ja-models <folder>`: manga-ocr model files, for pages with vertical Japanese.
+    let ja = arg_after(args, "--ja-models").and_then(|d| crate::jaocr::engine_from(Path::new(&d)));
+    let (code, md) = match run(&dir, ja) {
         Ok((code, md)) => (code, md),
         Err(e) => (2, format!("# Проверка на снимках\n\nНе запустилась: {e:#}\n")),
     };
@@ -113,7 +115,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     code
 }
 
-fn run(dir: &Path) -> Result<(i32, String)> {
+fn run(dir: &Path, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Result<(i32, String)> {
     let paths = Paths::detect()?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let client = crate::llm::client::LlmClient::new("http://127.0.0.1:9", 5);
@@ -146,7 +148,7 @@ fn run(dir: &Path) -> Result<(i32, String)> {
                     no_ocr = Some(e.to_string());
                     res.error = Some(format!("Windows OCR для языка «{}» не установлен", expect.lang.name_ru()));
                 } else {
-                    match load_png(p).and_then(|f| rt.block_on(analyse(&f, expect.lang, &ocr, &tr))) {
+                    match load_png(p).and_then(|f| rt.block_on(analyse(&f, expect.lang, &ocr, &tr, ja.clone()))) {
                         Ok((found, ms)) => {
                             res.checks = st::check(&expect, &found);
                             res.found = found;
@@ -188,7 +190,8 @@ pub async fn save_case(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
         std::fs::create_dir_all(&dir)?;
         let png = base.with_extension("png");
         save_png(&frame, &png)?;
-        let (found, _) = analyse(&frame, lang, &ocr, &tr).await?;
+        let ja = crate::jaocr::engine(&shared).await;
+        let (found, _) = analyse(&frame, lang, &ocr, &tr, ja).await?;
         std::fs::write(base.with_extension("expect"), st::draft(&found, lang))?;
         Ok::<PathBuf, anyhow::Error>(png)
     }

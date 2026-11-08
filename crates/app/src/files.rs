@@ -106,7 +106,8 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
             }
         };
         let lines = recognize(ocr, &frame, lang).await?;
-        let items = interface::bubbles(&lines, lang, tr, &frame);
+        let ja = crate::jaocr::engine(shared).await;
+        let items = interface::page_items(&lines, lang, tr, &frame, ja).await;
         tracing::info!(target: "files", "{page}: {} строк → {} пузырей", lines.len(), items.len());
         if items.is_empty() {
             // No text: the page is kept unchanged (no re-encoding).

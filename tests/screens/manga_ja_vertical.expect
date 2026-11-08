@@ -1,0 +1,9 @@
+# Нарисованная страница манги с вертикальным японским (tools/screens/make_pages.py).
+# Windows OCR такое не читает: пузыри находятся по картинке, текст читает
+# manga-ocr (нужны её файлы: --ja-models <папка>).
+lang	ja
+bubbles	3
+bubble	置いてかないで
+bubble	早く来い
+bubble	約束だからね
+absent	Vol. 2

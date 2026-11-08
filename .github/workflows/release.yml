@@ -43,8 +43,17 @@ jobs:
       - name: Test core
         run: cargo test -p wuxia-core -p manga-pages
 
+      # manga-ocr's build script downloads its model unless the files exist:
+      # the program downloads it itself when the reader turns the feature on.
+      - name: Placeholder for the manga-ocr model (not needed to build)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/ja-dummy" | Out-Null
+          foreach ($f in 'encoder_model.onnx','decoder_model.onnx','vocab.txt') { New-Item -ItemType File -Force "$env:RUNNER_TEMP/ja-dummy/$f" | Out-Null }
+          "MANGA_OCR_MODELS_DIR=$env:RUNNER_TEMP/ja-dummy" | Out-File -Append $env:GITHUB_ENV
+
       - name: Clippy
-        run: cargo clippy -p manga-local --release -- -D clippy::correctness
+        run: cargo clippy -p manga-local --release --features vertical-ja -- -D clippy::correctness
 
       - name: Build
         shell: pwsh
@@ -52,7 +61,7 @@ jobs:
           # Build date (Moscow time) and commit, shown in the panel and the log.
           $msk = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date).ToUniversalTime(), 'Russian Standard Time')
           $env:MANGA_BUILD = "$($msk.ToString('dd.MM.yyyy HH:mm')) · $($env:GITHUB_SHA.Substring(0,7))"
-          cargo build -p manga-local --release
+          cargo build -p manga-local --release --features vertical-ja
 
       - name: Download llama.cpp (Vulkan + CPU)
         shell: pwsh
@@ -158,11 +167,21 @@ jobs:
             }
           }
 
+      - name: manga-ocr model (vertical Japanese page)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force ja-models | Out-Null
+          foreach ($f in 'vocab.txt','decoder_model.onnx','encoder_model.onnx') {
+            curl.exe -fsSL -o "ja-models/$f" "https://huggingface.co/mayocream/manga-ocr-onnx/resolve/main/$f"
+          }
+          Get-ChildItem ja-models | Format-Table Name, Length
+
       - name: Screenshot tests (real Windows OCR on tests/screens)
         shell: pwsh
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
-          $p = Start-Process -FilePath app\MangaLocal\manga-local.exe -ArgumentList '--selftest','tests\screens','--out','selftest-report.md' -Wait -PassThru
+          $p = Start-Process -FilePath app\MangaLocal\manga-local.exe -ArgumentList '--selftest','tests\screens','--out','selftest-report.md','--ja-models','ja-models' -Wait -PassThru
           Write-Host "exit code $($p.ExitCode)"
           if (Test-Path selftest-report.md) { Get-Content selftest-report.md }
           if ($p.ExitCode -eq 2) { Write-Host "::warning::Windows OCR is not available on the runner - screenshot tests skipped"; exit 0 }

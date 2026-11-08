@@ -27,6 +27,8 @@ mod hotkeys;
 #[cfg(windows)]
 mod interface;
 #[cfg(windows)]
+mod jaocr;
+#[cfg(windows)]
 mod llm;
 #[cfg(windows)]
 mod mascot;
@@ -475,6 +477,20 @@ mod app {
                     None => shared.ui(|u| u.notice("OCR не готов — перевод файлов недоступен")),
                 },
                 Command::StopFiles => files::stop(),
+                Command::DownloadJaOcr => {
+                    let sh = shared.clone();
+                    tokio::spawn(async move {
+                        sh.ui(|u| u.ja_ocr_status = Some("Скачиваю распознавание японского…".into()));
+                        let r = crate::jaocr::download(sh.clone()).await;
+                        sh.ui(|u| match &r {
+                            Ok(()) => {
+                                u.ja_ocr_status = None;
+                                u.notice("Распознавание вертикального японского скачано и включено");
+                            }
+                            Err(e) => u.ja_ocr_status = Some(format!("Не скачалось: {e}. Проверьте интернет и включите ещё раз")),
+                        });
+                    });
+                }
                 Command::RunBench => {
                     let sh = shared.clone();
                     tokio::spawn(async move {

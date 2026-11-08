@@ -72,6 +72,8 @@ pub enum Command {
     TranslateFiles(std::path::PathBuf),
     /// Stop the chapter translation after the current page.
     StopFiles,
+    /// Download the manga-ocr model (vertical Japanese).
+    DownloadJaOcr,
     /// Open the dictionary of the current title (created on first use).
     OpenTitleDict,
     /// Game profile or text language changed: reload dictionaries, check OCR.
@@ -231,6 +233,8 @@ pub struct UiState {
     pub bench_progress: Option<String>,
     /// Chapter files being translated: what is happening now.
     pub files_progress: Option<String>,
+    /// Vertical Japanese (manga-ocr): download progress or a problem.
+    pub ja_ocr_status: Option<String>,
     pub ocr_debug: Option<OcrDebug>,
     /// Windows OCR availability (None = not checked yet).
     pub ocr_status: Option<Result<(), String>>,
