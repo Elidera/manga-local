@@ -11,7 +11,7 @@ on:
         required: false
         default: "hymt2-1.8b"
       langs:
-        description: "Source languages to test (comma separated): ko, ja, zh"
+        description: "Source languages to test (comma separated): ko, ja, zh, en"
         required: false
         default: "ko,ja"
   push:
