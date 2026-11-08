@@ -86,10 +86,17 @@ jobs:
       - name: Windows OCR for Korean and Japanese (for the screenshot tests)
         shell: pwsh
         continue-on-error: true
+        timeout-minutes: 50
         run: |
+          # Windows Update on the runner sometimes fails once ("file already exists"); try again.
           foreach ($l in 'ko-KR', 'ja-JP') {
-            Get-WindowsCapability -Online -Name "Language.OCR*$l*" | Format-Table Name, State
-            Get-WindowsCapability -Online -Name "Language.OCR*$l*" | Where-Object State -ne Installed | Add-WindowsCapability -Online
+            for ($try = 1; $try -le 3; $try++) {
+              $cap = Get-WindowsCapability -Online -Name "Language.OCR*$l*"
+              Write-Host "$l try $try : $($cap.Name) $($cap.State)"
+              if ($cap.State -eq 'Installed') { break }
+              try { $cap | Add-WindowsCapability -Online -ErrorAction Stop | Out-Null }
+              catch { Write-Host "  failed: $($_.Exception.Message)"; Start-Sleep -Seconds 15 }
+            }
           }
 
       - name: Screenshot tests (real Windows OCR on tests/screens)
