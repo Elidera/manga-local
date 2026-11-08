@@ -1,5 +1,7 @@
 # Builds manga-local.exe, bundles llama-server (Vulkan + CPU) and produces the
-# Windows installer. Push a tag like v0.1.0 to publish a GitHub Release.
+# Windows installer (ready in ~5 minutes). The screenshot tests run afterwards in
+# their own job: Windows Update needs ~25 minutes to give the runner Korean and
+# Japanese OCR. Push a tag like v0.1.0 to publish a GitHub Release.
 name: build
 
 on:
@@ -83,33 +85,6 @@ jobs:
           Copy-Item -Recurse assets/bench dist/bench
           Copy-Item README.md, LICENSE dist/
 
-      - name: Windows OCR for Korean and Japanese (for the screenshot tests)
-        shell: pwsh
-        continue-on-error: true
-        timeout-minutes: 50
-        run: |
-          # Windows Update on the runner sometimes fails once ("file already exists"); try again.
-          foreach ($l in 'ko-KR', 'ja-JP') {
-            for ($try = 1; $try -le 3; $try++) {
-              $cap = Get-WindowsCapability -Online -Name "Language.OCR*$l*"
-              Write-Host "$l try $try : $($cap.Name) $($cap.State)"
-              if ($cap.State -eq 'Installed') { break }
-              try { $cap | Add-WindowsCapability -Online -ErrorAction Stop | Out-Null }
-              catch { Write-Host "  failed: $($_.Exception.Message)"; Start-Sleep -Seconds 15 }
-            }
-          }
-
-      - name: Screenshot tests (real Windows OCR on tests/screens)
-        shell: pwsh
-        continue-on-error: true
-        timeout-minutes: 5
-        run: |
-          $p = Start-Process -FilePath dist\manga-local.exe -ArgumentList '--selftest','tests\screens','--out','selftest-report.md' -Wait -PassThru
-          Write-Host "exit code $($p.ExitCode)"
-          if (Test-Path selftest-report.md) { Get-Content selftest-report.md }
-          if ($p.ExitCode -eq 2) { Write-Host "::warning::Windows OCR is not available on the runner - screenshot tests skipped"; exit 0 }
-          exit $p.ExitCode
-
       - name: Portable zip
         shell: pwsh
         run: |
@@ -133,7 +108,6 @@ jobs:
           path: |
             installer/Output/*.exe
             MangaLocal-portable-x64.zip
-            selftest-report.md
 
       - name: Keep only the 5 newest builds
         if: github.event_name != 'pull_request'
@@ -149,3 +123,52 @@ jobs:
           files: |
             installer/Output/*.exe
             MangaLocal-portable-x64.zip
+
+  screenshots:
+    # Real Windows OCR on tests/screens with the build above (its portable zip).
+    runs-on: windows-latest
+    needs: windows
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: manga-local-windows
+          path: build
+
+      - name: Unpack the portable build
+        shell: pwsh
+        run: Expand-Archive build/MangaLocal-portable-x64.zip -DestinationPath app
+
+      - name: Windows OCR for Korean and Japanese
+        shell: pwsh
+        continue-on-error: true
+        timeout-minutes: 50
+        run: |
+          # Windows Update on the runner sometimes fails once ("file already exists"); try again.
+          foreach ($l in 'ko-KR', 'ja-JP') {
+            for ($try = 1; $try -le 3; $try++) {
+              $cap = Get-WindowsCapability -Online -Name "Language.OCR*$l*"
+              Write-Host "$l try $try : $($cap.Name) $($cap.State)"
+              if ($cap.State -eq 'Installed') { break }
+              try { $cap | Add-WindowsCapability -Online -ErrorAction Stop | Out-Null }
+              catch { Write-Host "  failed: $($_.Exception.Message)"; Start-Sleep -Seconds 15 }
+            }
+          }
+
+      - name: Screenshot tests (real Windows OCR on tests/screens)
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          $p = Start-Process -FilePath app\MangaLocal\manga-local.exe -ArgumentList '--selftest','tests\screens','--out','selftest-report.md' -Wait -PassThru
+          Write-Host "exit code $($p.ExitCode)"
+          if (Test-Path selftest-report.md) { Get-Content selftest-report.md }
+          if ($p.ExitCode -eq 2) { Write-Host "::warning::Windows OCR is not available on the runner - screenshot tests skipped"; exit 0 }
+          exit $p.ExitCode
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-report
+          path: selftest-report.md
+          retention-days: 7
