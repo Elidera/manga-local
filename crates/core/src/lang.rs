@@ -224,6 +224,38 @@ pub fn is_label(s: &str, lang: Lang) -> bool {
     }
 }
 
+/// Does a short text look like a sound effect («쾅!», «두근두근», «ドキドキ»,
+/// «BANG!»)? Only the shape is judged (a few letters, or a doubled sound,
+/// one word); the caller also checks it stands on the artwork, outside every
+/// bubble — short replies inside bubbles are speech.
+pub fn is_sfx_like(s: &str, lang: Lang) -> bool {
+    let letters: Vec<char> = s
+        .chars()
+        .filter(|&c| match lang {
+            Lang::Ko => text::is_hangul(c),
+            Lang::Ja => text::is_kana(c) || text::is_han(c),
+            Lang::Zh => text::is_han(c),
+            Lang::En => is_latin_letter(c),
+        })
+        .collect();
+    let n = letters.len();
+    if n == 0 {
+        return false;
+    }
+    let words = s.split_whitespace().filter(|w| w.chars().any(|c| c.is_alphabetic())).count();
+    // A doubled sound: «두근두근», «ドキドキ», «ゴゴゴ».
+    let doubled = n >= 2 && {
+        let half = n / 2;
+        (n % 2 == 0 && letters[..half] == letters[half..]) || letters.iter().all(|&c| c == letters[0])
+    };
+    match lang {
+        Lang::En => words == 1 && (n <= 8 || doubled),
+        Lang::Ko => words <= 1 && (n <= 3 || doubled),
+        Lang::Ja => words <= 1 && (n <= 4 || doubled),
+        Lang::Zh => words <= 1 && (n <= 2 || doubled),
+    }
+}
+
 /// Share of the language's own letters among non-space, non-punctuation
 /// characters (punctuation like «……!?» is common in bubbles and is not noise).
 pub fn script_ratio(s: &str, lang: Lang) -> f32 {
@@ -320,6 +352,16 @@ mod tests {
         assert!(is_label("SOL3 Phase", Lang::En));
         assert!(is_label("Lv70 NPCs Rewards", Lang::En));
         assert!(is_subtitle("Meet me on the 2nd floor at 10am, and bring the TV.", Lang::En));
+    }
+
+    #[test]
+    fn sound_effects() {
+        for (s, l) in [("쾅!", Lang::Ko), ("두근두근", Lang::Ko), ("ドキドキ", Lang::Ja), ("ゴゴゴ", Lang::Ja), ("Bang!", Lang::En), ("轰!", Lang::Zh)] {
+            assert!(is_sfx_like(s, l), "{s}");
+        }
+        for (s, l) in [("오늘은 내가 살게.", Lang::Ko), ("ちょっと待って！", Lang::Ja), ("Wait up!", Lang::En)] {
+            assert!(!is_sfx_like(s, l), "{s}");
+        }
     }
 
     #[test]

@@ -123,6 +123,9 @@ pub struct InterfaceItem {
     /// Picture laid under the translation (screen px): the letters covered
     /// with paper in a bubble, or the background filled in over artwork.
     pub patch: Option<Arc<manga_core::clean::Patch>>,
+    /// A sound effect on the artwork («쾅!», «ドキドキ»): translated briefly on
+    /// its own (or left alone), never mixed with the dialogue.
+    pub sfx: bool,
 }
 
 #[derive(Debug, Clone, Default)]

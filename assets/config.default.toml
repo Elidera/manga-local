@@ -110,6 +110,8 @@ hover_original = true
 page_context = true
 # Японский: столбцы и рукописный текст читает manga-ocr (модель ~440 МБ скачивается при включении).
 vertical_ja = false
+# Звуки на рисунке («БАХ!», «쾅», «ドキドキ»): translate — переводить коротко отдельно от реплик, keep — не трогать.
+sfx = "translate"
 
 [ocr]
 # Устарело: язык распознавания берётся из general.source_lang.

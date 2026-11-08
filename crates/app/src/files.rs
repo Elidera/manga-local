@@ -107,7 +107,10 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
         };
         let lines = recognize(ocr, &frame, lang).await?;
         let ja = crate::jaocr::engine(shared).await;
-        let items = interface::page_items(&lines, lang, tr, &frame, ja).await;
+        let mut items = interface::page_items(&lines, lang, tr, &frame, ja).await;
+        if cfg.interface.sfx == "keep" {
+            items.retain(|it| !it.sfx);
+        }
         tracing::info!(target: "files", "{page}: {} строк → {} пузырей", lines.len(), items.len());
         if items.is_empty() {
             // No text: the page is kept unchanged (no re-encoding).
@@ -117,20 +120,14 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
         }
         progress(&format!("перевожу {}", manga_core::text::count_ru(items.len(), "пузырь", "пузыря", "пузырей")));
         let mut result: HashMap<String, String> = HashMap::new();
-        let mut unique: Vec<String> = Vec::new();
-        for it in &items {
-            if result.contains_key(&it.src) || unique.contains(&it.src) {
-                continue;
-            }
-            match tr.lookup(&preset.id, &it.src, TextKind::Dialogue) {
-                Some(t) => {
-                    result.insert(it.src.clone(), t);
-                }
-                None => unique.push(it.src.clone()),
-            }
-        }
+        let (talk, sfx) = interface::split_unique(&items, tr, &preset.id, &mut result);
         let context = if cfg.interface.page_context { prev.clone() } else { Vec::new() };
-        interface::translate_texts(shared, tr, &preset, &game, unique, &context, || !STOP.load(Ordering::SeqCst), |src, dst| {
+        let alive = || !STOP.load(Ordering::SeqCst);
+        interface::translate_texts(shared, tr, &preset, &game, talk, TextKind::Dialogue, &context, alive, |src, dst| {
+            result.insert(src.to_string(), dst);
+        })
+        .await;
+        interface::translate_texts(shared, tr, &preset, &game, sfx, TextKind::Interface, &[], alive, |src, dst| {
             result.insert(src.to_string(), dst);
         })
         .await;
@@ -140,7 +137,7 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
                 shared.ui(|u| u.offer_names(names));
             }
         }
-        let pairs: Vec<(String, String)> = items.iter().filter_map(|it| result.get(&it.src).filter(|d| **d != it.src).map(|d| (it.src.clone(), d.clone()))).collect();
+        let pairs: Vec<(String, String)> = items.iter().filter(|it| !it.sfx).filter_map(|it| result.get(&it.src).filter(|d| **d != it.src).map(|d| (it.src.clone(), d.clone()))).collect();
         prev = pairs.into_iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
         progress("вписываю перевод");
         let bubbles: Vec<Bubble> = items

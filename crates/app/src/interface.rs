@@ -92,7 +92,11 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
                 Some(p) if busy => contrast_text(p.mean_rgb()),
                 _ => contrast_text(bg),
             };
-            InterfaceItem { fg, busy, bg, rect, src, dst: None, line_h, lines: g.len(), patch: patch.map(Arc::new) }
+            // On the artwork, outside every bubble, and shaped like a sound: a sound effect.
+            let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+            let in_bubble = outlines.iter().any(|o| cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h);
+            let sfx = !in_bubble && busy && manga_core::lang::is_sfx_like(&src, lang);
+            InterfaceItem { fg, busy, bg, rect, src, dst: None, line_h, lines: g.len(), patch: patch.map(Arc::new), sfx }
         })
         .filter(|it| !it.src.is_empty())
         .collect();
@@ -106,6 +110,26 @@ static SESSIONS: AtomicU64 = AtomicU64::new(0);
 
 fn reading(session: u64) -> bool {
     READING.load(Ordering::SeqCst) == session
+}
+
+/// The texts to translate, split by kind: (dialogue, sound effects). Cached
+/// answers go straight into `done`.
+pub fn split_unique(items: &[InterfaceItem], tr: &Translator, model: &str, done: &mut HashMap<String, String>) -> (Vec<String>, Vec<String>) {
+    let (mut talk, mut sfx) = (Vec::new(), Vec::new());
+    for it in items {
+        let list = if it.sfx { &mut sfx } else { &mut talk };
+        if done.contains_key(&it.src) || list.contains(&it.src) {
+            continue;
+        }
+        let kind = if it.sfx { TextKind::Interface } else { TextKind::Dialogue };
+        match tr.lookup(model, &it.src, kind) {
+            Some(t) => {
+                done.insert(it.src.clone(), t);
+            }
+            None => list.push(it.src.clone()),
+        }
+    }
+    (talk, sfx)
 }
 
 /// Reading order of a page's bubbles: panel by panel (found by the gutters
@@ -157,7 +181,7 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
         let w = (f.outer.w * 0.78).max(f.text.w);
         let rect = manga_core::image::Rect { x: cx - w / 2.0, y: f.text.y, w, h: f.text.h };
         let patch = manga_core::clean::clean_text(frame, &f.text, f.char_px, f.paper, true);
-        items.push(InterfaceItem { fg: contrast_text(f.paper), busy: false, bg: f.paper, rect, src, dst: None, line_h: f.char_px, lines: f.lines.max(2), patch: patch.map(Arc::new) });
+        items.push(InterfaceItem { fg: contrast_text(f.paper), busy: false, bg: f.paper, rect, src, dst: None, line_h: f.char_px, lines: f.lines.max(2), patch: patch.map(Arc::new), sfx: false });
     }
     let order = page_order(&items, frame, true);
     order.into_iter().map(|i| items[i].clone()).collect()
@@ -369,32 +393,24 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     }
 
     let preset = cfg.active_model().clone();
-    // Instant answers first (cache/glossary/corrections), then the model.
-    let mut unique: Vec<String> = Vec::new();
-    let mut done: HashMap<String, String> = HashMap::new();
-    for it in &items {
-        if done.contains_key(&it.src) || unique.contains(&it.src) {
-            continue;
-        }
-        match tr.lookup(&preset.id, &it.src, TextKind::Dialogue) {
-            Some(t) => {
-                done.insert(it.src.clone(), t);
-            }
-            None => unique.push(it.src.clone()),
-        }
-    }
     let mut items = items;
+    if cfg.interface.sfx == "keep" {
+        items.retain(|it| !it.sfx);
+    }
+    // Instant answers first (cache/glossary/corrections), then the model.
+    let mut done: HashMap<String, String> = HashMap::new();
+    let (talk, sfx) = split_unique(&items, tr, &preset.id, &mut done);
     for it in items.iter_mut() {
         it.dst = done.get(&it.src).cloned();
     }
-    let n_pending = unique.len();
+    let n_pending = talk.len() + sfx.len();
     shared.ui(|u| u.interface = Some(InterfaceView { items, pending: n_pending, generation: gen }));
-    if unique.is_empty() {
+    if n_pending == 0 {
         remember_page(shared, gen);
     } else {
         let (shared, tr) = (shared.clone(), tr.clone());
         let game = cfg.general.game_title.clone();
-        tokio::spawn(async move { translate_bubbles(&shared, &tr, &preset, &game, gen, unique).await });
+        tokio::spawn(async move { translate_bubbles(&shared, &tr, &preset, &game, gen, talk, sfx).await });
     }
     Some(page)
 }
@@ -402,7 +418,7 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
 /// Translate the page's new bubbles and put each result into the view `gen`.
 /// Stops when that view is gone (the page moved or F8 was pressed); finished
 /// translations stay in the cache, so the page comes back at once.
-async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &crate::config::ModelPreset, game: &str, gen: u64, unique: Vec<String>) {
+async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &crate::config::ModelPreset, game: &str, gen: u64, unique: Vec<String>, sfx: Vec<String>) {
     let alive = || shared.interface_gen.load(Ordering::SeqCst) == gen;
     let lang = shared.cfg().source_lang();
     let set_result = |src: &str, dst: String| {
@@ -418,7 +434,11 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
         })
     };
     let context = if shared.cfg().interface.page_context { PAGE_CONTEXT.lock().unwrap().clone() } else { Vec::new() };
-    translate_texts(shared, tr, preset, game, unique, &context, alive, set_result).await;
+    translate_texts(shared, tr, preset, game, unique, TextKind::Dialogue, &context, alive, set_result).await;
+    // Sound effects: on their own, briefly, with no dialogue around them.
+    if !sfx.is_empty() && alive() {
+        translate_texts(shared, tr, preset, game, sfx, TextKind::Interface, &[], alive, set_result).await;
+    }
     if alive() {
         remember_page(shared, gen);
     }
@@ -433,7 +453,7 @@ fn remember_page(shared: &Arc<Shared>, gen: u64) {
     let pairs: Vec<(String, String)> = {
         let u = shared.ui.lock().unwrap();
         let Some(v) = u.interface.as_ref().filter(|v| v.generation == gen) else { return };
-        v.items.iter().filter_map(|it| it.dst.as_ref().filter(|d| **d != it.src).map(|d| (it.src.clone(), d.clone()))).collect()
+        v.items.iter().filter(|it| !it.sfx).filter_map(|it| it.dst.as_ref().filter(|d| **d != it.src).map(|d| (it.src.clone(), d.clone()))).collect()
     };
     if pairs.is_empty() {
         return;
@@ -453,6 +473,7 @@ pub async fn translate_texts(
     preset: &crate::config::ModelPreset,
     game: &str,
     unique: Vec<String>,
+    kind: TextKind,
     context: &[(String, String)],
     alive: impl Fn() -> bool,
     mut done: impl FnMut(&str, String),
@@ -473,7 +494,7 @@ pub async fn translate_texts(
         let mut rest: Vec<String> = chunk.clone();
         if chunk.len() > 1 {
             let t0 = std::time::Instant::now();
-            match tr.translate_batch(preset, game, &chunk, TextKind::Dialogue, context).await {
+            match tr.translate_batch(preset, game, &chunk, kind, context).await {
                 Ok(out) => {
                     shared.ui(|u| u.stats.add_llm(t0.elapsed().as_millis() / chunk.len() as u128, false));
                     rest.clear();
@@ -494,7 +515,7 @@ pub async fn translate_texts(
             if !alive() {
                 return;
             }
-            let res = tr.translate(preset, game, "", &src, TextKind::Dialogue, Opts { use_cache: true, use_history: false }, |_| {}).await;
+            let res = tr.translate(preset, game, "", &src, kind, Opts { use_cache: true, use_history: false }, |_| {}).await;
             let dst = match res {
                 Ok(o) => {
                     shared.ui(|u| u.stats.add_llm(o.ms, o.cached));

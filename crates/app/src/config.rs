@@ -142,6 +142,9 @@ pub struct Interface {
     /// Japanese: bubbles found by the picture are read by manga-ocr (vertical
     /// columns, handwriting). Needs its model (~441 MB, downloaded on demand).
     pub vertical_ja: bool,
+    /// Sound effects on the artwork: "translate" (briefly, apart from the
+    /// dialogue) or "keep" (left as drawn).
+    pub sfx: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -309,7 +312,7 @@ impl Default for Dialogue {
 
 impl Default for Interface {
     fn default() -> Self {
-        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true, page_context: true, vertical_ja: false }
+        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true, page_context: true, vertical_ja: false, sfx: "translate".into() }
     }
 }
 
