@@ -1,0 +1,315 @@
+//! State shared between the async workers and the egui UI thread.
+
+use crate::config::Config;
+use crate::paths::Paths;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock, RwLock};
+use tokio::sync::mpsc::UnboundedSender;
+use wuxia_core::image::Rect;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ServerStatus {
+    Stopped,
+    Starting(String),
+    Ready { model: String },
+    Failed(String),
+}
+
+impl ServerStatus {
+    pub fn label(&self) -> String {
+        match self {
+            ServerStatus::Stopped => "остановлен".into(),
+            ServerStatus::Starting(s) => format!("запуск: {s}"),
+            ServerStatus::Ready { model } => format!("готов · {model}"),
+            ServerStatus::Failed(e) => format!("ошибка: {e}"),
+        }
+    }
+    pub fn is_ready(&self) -> bool {
+        matches!(self, ServerStatus::Ready { .. })
+    }
+}
+
+/// A still picture of the screen with the texts found on it.
+#[derive(Debug, Clone)]
+pub struct FreezeView {
+    pub shot: std::sync::Arc<wuxia_core::image::Frame>,
+    pub lines: Vec<FreezeLine>,
+    pub selected: Option<usize>,
+    /// Text recognition still running.
+    pub busy: bool,
+    /// Changes when the picture changes (texture reload in the UI).
+    pub id: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FreezeLine {
+    /// Screen pixels.
+    pub rect: Rect,
+    pub src: String,
+    pub dst: Option<String>,
+    pub pending: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum Command {
+    ToggleDialogue,
+    ScreenTranslate,
+    ToggleOriginal,
+    SelectRegion,
+    RegionSelected([f32; 4]),
+    CancelRegion,
+    TogglePanel,
+    ShowPanel,
+    SwitchModel(String),
+    /// Use a .gguf file the user chose instead of downloading the model.
+    UseModelFile(std::path::PathBuf),
+    RestartServer,
+    SaveCorrection { src: String, dst: String },
+    TestTranslate(String),
+    ReloadGlossary,
+    /// Game profile or text language changed: reload dictionaries, check OCR.
+    GameChanged,
+    /// Exit the program (tray menu or the panel's «Выход»).
+    Quit,
+    /// Show a test label over the game for 10 s (is the overlay visible at all?).
+    TestOverlay,
+    /// Start / finish moving and resizing the translation window on screen.
+    EditBox,
+    /// Save the screen as a new screenshot test case (Ctrl+F9).
+    SaveCase,
+    /// Dictionaries for sharing: write the bundle to this file / merge one in.
+    ExportDicts(std::path::PathBuf),
+    ImportDicts(std::path::PathBuf),
+    /// The last dialogue translation is bad: forget it and translate again (Ctrl+F11).
+    BadTranslation,
+    /// Freeze frame (Ctrl+F8): a still picture of the screen, click a text to translate it.
+    Freeze,
+    FreezeTranslate(usize),
+    FreezeClose,
+    /// Add a pair to the user's glossary (from the freeze frame).
+    AddTerm { src: String, dst: String },
+    /// Self-check: OCR, model, game window, overlay, capture, hotkeys → report file.
+    Diagnose,
+    /// Open a web page in the default browser.
+    OpenUrl(String),
+    /// The panel was closed with ✕: explain once where the program went.
+    PanelClosedToTray,
+    RunBench,
+    SaveConfig,
+    Open(std::path::PathBuf),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DialogueView {
+    pub source: String,
+    pub speaker: Option<String>,
+    pub translation: String,
+    pub pending: bool,
+    pub error: Option<String>,
+    pub from_cache: bool,
+}
+
+/// A speech-like text found anywhere on screen in «Авто» mode, with its translation.
+#[derive(Debug, Clone)]
+pub struct AutoLine {
+    pub id: u64,
+    /// Where the original text is (physical screen pixels).
+    pub rect: Rect,
+    pub source: String,
+    pub speaker: Option<String>,
+    pub translation: String,
+    pub pending: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterfaceItem {
+    /// Physical screen pixels.
+    pub rect: Rect,
+    pub src: String,
+    pub dst: Option<String>,
+    pub bg: [u8; 3],
+    pub fg: [u8; 3],
+    /// Busy background: draw a plate instead of a flat mask.
+    pub busy: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InterfaceView {
+    pub items: Vec<InterfaceItem>,
+    pub pending: usize,
+    pub generation: u64,
+}
+
+/// What the dialogue OCR saw last time (shown in the panel for troubleshooting).
+#[derive(Debug, Clone)]
+pub struct OcrDebug {
+    pub frame: std::sync::Arc<wuxia_core::image::Frame>,
+    pub text: String,
+    pub ms: u128,
+    pub id: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecentLine {
+    pub src: String,
+    pub dst: String,
+    pub model: String,
+    pub ms: u128,
+    pub cached: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Stats {
+    pub ocr_ms_avg: f32,
+    pub llm_ms_avg: f32,
+    pub translated: u64,
+    pub cache_hits: u64,
+}
+
+impl Stats {
+    pub fn add_ocr(&mut self, ms: u128) {
+        self.ocr_ms_avg = ema(self.ocr_ms_avg, ms as f32);
+    }
+    pub fn add_llm(&mut self, ms: u128, cached: bool) {
+        if cached {
+            self.cache_hits += 1;
+        } else {
+            self.translated += 1;
+            self.llm_ms_avg = ema(self.llm_ms_avg, ms as f32);
+        }
+    }
+}
+
+fn ema(prev: f32, x: f32) -> f32 {
+    if prev == 0.0 {
+        x
+    } else {
+        prev * 0.8 + x * 0.2
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct UiState {
+    pub dialogue: Option<DialogueView>,
+    /// «Авто» mode: translations of texts found anywhere on screen.
+    pub auto_lines: Vec<AutoLine>,
+    pub interface: Option<InterfaceView>,
+    pub dialogue_on: bool,
+    pub show_original: bool,
+    pub selecting_region: bool,
+    /// Screenshot shown in the region picker.
+    pub region_shot: Option<std::sync::Arc<wuxia_core::image::Frame>>,
+    /// Freeze frame being shown (Ctrl+F8).
+    pub freeze: Option<FreezeView>,
+    /// Hotkeys that could not be registered (for the self-check).
+    pub hotkey_problems: Vec<String>,
+    /// The panel was hidden only so it is not in a screenshot (F8, region,
+    /// freeze frame): it comes back when that action is over. Only ✕ or
+    /// minimising sends the panel to the tray.
+    pub panel_return: bool,
+    pub panel_open: bool,
+    /// Bring the panel to the front on the next frames (it can open behind the game).
+    pub focus_panel: bool,
+    pub recent: VecDeque<RecentLine>,
+    pub stats: Stats,
+    pub notices: VecDeque<String>,
+    pub server: Option<ServerStatus>,
+    pub bench_progress: Option<String>,
+    pub ocr_debug: Option<OcrDebug>,
+    /// Windows OCR availability (None = not checked yet).
+    pub ocr_status: Option<Result<(), String>>,
+    /// (glossary terms, fix rules)
+    pub dict_counts: (usize, usize),
+    /// Result of the panel's "check translation" field.
+    pub test_result: Option<String>,
+    pub paused_unfocused: bool,
+    /// Until when the test label is shown over the screen.
+    pub test_overlay_until: Option<std::time::Instant>,
+    /// The translation window is being moved / resized with the mouse.
+    pub edit_box: bool,
+}
+
+impl UiState {
+    /// Hide the panel for a screenshot; returns whether it was open.
+    pub fn hide_panel_for_shot(&mut self) -> bool {
+        let was = self.panel_open;
+        if was {
+            self.panel_open = false;
+            self.panel_return = true;
+        }
+        was
+    }
+
+    /// The screenshot action is over: show the panel again if it hid for it.
+    pub fn restore_panel(&mut self) {
+        if self.panel_return {
+            self.panel_return = false;
+            self.panel_open = true;
+        }
+    }
+}
+
+impl UiState {
+    pub fn notice(&mut self, s: impl Into<String>) {
+        let s = s.into();
+        tracing::warn!("{s}");
+        self.notices.push_back(s);
+        while self.notices.len() > 8 {
+            self.notices.pop_front();
+        }
+    }
+    pub fn push_recent(&mut self, r: RecentLine) {
+        if self.recent.front().map_or(false, |x| x.src == r.src) {
+            self.recent.pop_front();
+        }
+        self.recent.push_front(r);
+        self.recent.truncate(60);
+    }
+}
+
+pub struct Shared {
+    pub paths: Paths,
+    pub cfg: RwLock<Config>,
+    pub ui: Mutex<UiState>,
+    pub cmd: UnboundedSender<Command>,
+    pub egui: OnceLock<eframe::egui::Context>,
+    /// Incremented whenever a new dialogue line supersedes the previous one.
+    pub dialogue_seq: AtomicU64,
+    pub interface_gen: AtomicU64,
+    pub reset_watcher: AtomicBool,
+    /// Screen rectangles (physical px, x/y/w/h) the overlay painted in its last
+    /// frame. Captures blank them out (see `capture::capture_clean`).
+    pub overlay_px: Mutex<Vec<[i32; 4]>>,
+}
+
+impl Shared {
+    pub fn repaint(&self) {
+        if let Some(c) = self.egui.get() {
+            c.request_repaint();
+        }
+    }
+    pub fn send(&self, c: Command) {
+        let _ = self.cmd.send(c);
+    }
+    pub fn cfg(&self) -> Config {
+        self.cfg.read().unwrap().clone()
+    }
+    pub fn ui<R>(&self, f: impl FnOnce(&mut UiState) -> R) -> R {
+        let r = f(&mut self.ui.lock().unwrap());
+        self.repaint();
+        r
+    }
+    pub fn next_dialogue_seq(&self) -> u64 {
+        self.dialogue_seq.fetch_add(1, Ordering::SeqCst) + 1
+    }
+    pub fn dialogue_is_current(&self, seq: u64) -> bool {
+        self.dialogue_seq.load(Ordering::SeqCst) == seq
+    }
+    pub fn save_config(&self) {
+        let cfg = self.cfg();
+        if let Err(e) = cfg.save(&self.paths) {
+            self.ui(|u| u.notice(format!("Не удалось сохранить настройки: {e}")));
+        }
+    }
+}

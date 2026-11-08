@@ -1,0 +1,3 @@
+/target
+# Ядро берётся из свежего main Wuxia Local при каждой сборке
+Cargo.lock

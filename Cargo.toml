@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/app", "crates/bench"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Manga Local contributors"]
+
+# Ядро общее с Wuxia Local: исправления в нём попадают в обе программы.
+# Для работы с локальной копией ядра раскомментируйте [patch] ниже.
+[workspace.dependencies]
+wuxia-core = { git = "https://github.com/Elidera/wuxia-local", branch = "main" }
+
+# [patch."https://github.com/Elidera/wuxia-local"]
+# wuxia-core = { path = "../wuxia-local/crates/core" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

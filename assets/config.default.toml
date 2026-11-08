@@ -1,0 +1,158 @@
+# Manga Local — настройки.
+# Файл копируется в %LOCALAPPDATA%\MangaLocal\config.toml при первом запуске.
+# Большинство параметров меняются в панели (F10). Отсутствующие поля берутся по умолчанию.
+
+[general]
+# Игра: "wuwa" (Wuthering Waves), "wwm" (Where Winds Meet) или "custom" (своя).
+# Для wuwa и wwm название и заголовок окна подставляются сами.
+profile = "wuwa"
+# Язык текста в игре: "en" (английский) или "zh" (китайский).
+source_lang = "en"
+game_title = "Wuthering Waves"
+# Части заголовка окна игры через |. Пока активно другое окно, захват на паузе (экономит CPU).
+# Игра узнаётся только по заголовку и классу окна: программа не открывает процесс игры.
+window_match = "Wuthering Waves|鸣潮"
+pause_when_unfocused = true
+# Показывать перевод и панель на скриншотах (для отладки). При включении перевод
+# теоретически может попасть в собственный OCR, если наложен на область субтитров.
+visible_in_screenshots = false
+
+[llm]
+# managed — программа сама запускает llama-server.exe;
+# external — подключиться к уже запущенному OpenAI-совместимому серверу (другой ПК в сети, LM Studio, Ollama).
+mode = "managed"
+server_exe = "llama\\llama-server.exe"
+port = 8848
+external_url = "http://127.0.0.1:8080"
+active_model = "hymt2-1.8b"
+# Слои на видеокарте: 99 — всё на GPU (Vulkan), 0 — только процессор.
+gpu_layers = 99
+# Потоки CPU: 0 — автоматически (половина ядер, остальное игре).
+threads = 0
+ctx_size = 4096
+# Пониженный приоритет нейросети, чтобы не просаживать FPS.
+low_priority = true
+extra_args = []
+request_timeout_s = 60
+
+# Модели. hf — ссылка HuggingFace для автоматической загрузки при первом выборе
+# (единственный момент, когда нужен интернет). path заполняется сам после загрузки;
+# можно указать путь к своему .gguf вручную.
+# prompt: "hymt" — для переводческих моделей Tencent Hy-MT, "instruct" — для Qwen/Gemma и т. п.
+
+[[models]]
+id = "hymt2-1.8b"
+name = "Hy-MT2 1.8B Q4_K_M — быстрый (по умолчанию)"
+prompt = "hymt"
+hf = "tencent/Hy-MT2-1.8B-GGUF:Q4_K_M"
+path = ""
+temperature = 0.7
+top_p = 0.6
+top_k = 20
+repeat_penalty = 1.05
+max_tokens = 256
+no_think = false
+template = ""
+size_gb = 1.13
+
+[[models]]
+id = "hymt2-7b"
+name = "Hy-MT2 7B Q4_K_M — качественный (мощный ПК)"
+prompt = "hymt"
+hf = "tencent/Hy-MT2-7B-GGUF:Q4_K_M"
+path = ""
+temperature = 0.7
+top_p = 0.6
+top_k = 20
+repeat_penalty = 1.05
+max_tokens = 256
+no_think = false
+template = ""
+size_gb = 4.62
+
+[[models]]
+id = "qwen3.5-2b"
+name = "Qwen3.5 2B Q4_K_M — альтернатива"
+prompt = "instruct"
+hf = "unsloth/Qwen3.5-2B-GGUF:Q4_K_M"
+path = ""
+temperature = 0.3
+top_p = 0.8
+top_k = 20
+repeat_penalty = 1.05
+max_tokens = 256
+no_think = true
+template = ""
+size_gb = 1.35
+
+[[models]]
+id = "qwen3.5-4b"
+name = "Qwen3.5 4B Q4_K_M — литературный"
+prompt = "instruct"
+hf = "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"
+path = ""
+temperature = 0.3
+top_p = 0.8
+top_k = 20
+repeat_penalty = 1.05
+max_tokens = 256
+no_think = true
+template = ""
+size_gb = 2.9
+
+[dialogue]
+enabled = true
+# "auto" — читать весь экран и переводить всё, что похоже на речь (субтитры, реплики, подсказки);
+# "region" — только выбранная область (Ctrl+F7 переключает сюда).
+mode = "auto"
+# Как часто читать весь экран в режиме auto, мс.
+auto_interval_ms = 500
+# Область субтитров в долях экрана: [x, y, ширина, высота]. Удобнее выбрать мышью (Ctrl+F7).
+region = [0.18, 0.80, 0.64, 0.12]
+interval_ms = 150
+text_color = "light"
+ink_threshold = 200
+upscale = 2
+preprocess = "none"
+context_lines = 3
+show_original = false
+position = "below"
+font_size = 26.0
+# Вид перевода поверх игры: шрифт Windows, цвета текста и имени (R, G, B), обводка букв
+overlay_font = "Segoe UI"
+overlay_color = [250, 246, 235]
+overlay_name_color = [240, 200, 120]
+overlay_outline = true
+backdrop_opacity = 0.72
+stable_frames = 2
+clear_frames = 4
+change_threshold = 0.03
+style_hint = ""
+split_speaker = true
+region_set = false
+
+[interface]
+# replace — замена на месте, backdrop — тёмная подложка, list — списком сбоку
+mode = "replace"
+upscale = 0
+font_scale = 0.82
+max_lines = 120
+auto_hide = true
+
+[ocr]
+# Устарело: язык распознавания берётся из general.source_lang.
+language = "zh-Hans-CN"
+
+[hotkeys]
+# Примеры: "F7", "Ctrl+F7", "Alt+Shift+T". Назначенная клавиша не передаётся в игру.
+toggle_dialogue = "F7"
+screen_translate = "F8"
+show_original = "F9"
+select_region = "Ctrl+F7"
+panel = "F10"
+# Сохранить экран как случай для проверки (папка cases в данных программы)
+save_case = "Ctrl+F9"
+# Стоп-кадр: снимок экрана, клик по тексту — перевод
+freeze = "Ctrl+F8"
+# Последний перевод плохой: забыть и перевести заново
+bad_translation = "Ctrl+F11"
