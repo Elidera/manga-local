@@ -484,7 +484,7 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
                     });
                 }
             });
-            check_item(ui, None, "Откройте мангу в браузере", "Страница должна быть видна на экране; F8 переводит то, что видно");
+            check_item(ui, None, "Откройте мангу в браузере", "Страница должна быть видна на экране. F8 — и дальше просто листайте, перевод появляется сам");
         });
         ui.add_space(8.0);
     }
@@ -643,13 +643,13 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
         c.apply_profile();
     }
 
-    any |= search_card(ui, "Перевод страницы", "как показывать замена в пузыре подложкой списком размер шрифта высоты исходного текста скрывать при прокрутке шрифт перевода пожелание к стилю qwen", |ui| {
+    any |= search_card(ui, "Перевод страницы", "как показывать замена в пузыре подложкой списком размер шрифта высоты исходного текста следить за прокруткой листать скрывать при прокрутке шрифт перевода пожелание к стилю qwen", |ui| {
         let i = &mut c.interface;
         dirty |= setting_row(ui, "Как показывать", "Замена — перевод внутри пузыря поверх оригинала", |ui| segmented(ui, &mut i.mode, &[("replace", "Замена"), ("backdrop", "Подложка"), ("list", "Списком")]));
         dirty |= setting_row(ui, "Размер шрифта", "Относительно высоты исходного текста; если не влезает — уменьшается сам", |ui| {
             ui.add(egui::Slider::new(&mut i.font_scale, 0.5..=1.2).custom_formatter(|v, _| format!("{:.0} %", v * 100.0))).changed()
         });
-        dirty |= setting_row(ui, "Скрывать при прокрутке", "Перевод исчезает, когда страница сдвинулась", |ui| toggle(ui, &mut i.auto_hide).changed());
+        dirty |= setting_row(ui, "Следить за прокруткой", "Пока листаете, перевод спрятан; страница остановилась — новые пузыри переводятся сами", |ui| toggle(ui, &mut i.auto_hide).changed());
         let d = &mut c.dialogue;
         dirty |= setting_row(ui, "Шрифт перевода", "Любой шрифт Windows", |ui| {
             let mut changed = false;

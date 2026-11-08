@@ -1,13 +1,18 @@
 //! Page translation (F8): OCR the reader window, group the lines into speech
 //! bubbles, translate all bubbles of the page in one request and paint the
 //! Russian text inside each bubble over the original (fill + wrapped text).
+//!
+//! With «Следить за прокруткой» on, F8 starts a reading mode: the translation
+//! hides the moment the page starts moving (mouse wheel, scrolling keys, or the
+//! picture changing) and the newly visible bubbles are translated by themselves
+//! once the page stands still. F8 again turns it off.
 
 use crate::capture::{self, PxRect};
 use crate::ocr::Ocr;
 use crate::state::{InterfaceItem, InterfaceView, Shared};
 use crate::translate::{Opts, Translator};
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use crate::ocr::OcrLine;
@@ -79,38 +84,159 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
     order.into_iter().map(|i| items[i].clone()).collect()
 }
 
+/// Reading-mode session: 0 = off. A new F8 session ends the previous one.
+static READING: AtomicU64 = AtomicU64::new(0);
+static SESSIONS: AtomicU64 = AtomicU64::new(0);
+
+fn reading(session: u64) -> bool {
+    READING.load(Ordering::SeqCst) == session
+}
+
 pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
-    // Second press hides the current translation.
+    // Second press hides the translation and ends the reading mode.
     let showing = shared.ui.lock().unwrap().interface.is_some();
     if showing {
+        READING.store(0, Ordering::SeqCst);
         shared.interface_gen.fetch_add(1, Ordering::SeqCst);
         shared.ui(|u| u.interface = None);
         return;
     }
+    let session = SESSIONS.fetch_add(1, Ordering::SeqCst) + 1;
+    READING.store(session, Ordering::SeqCst);
+    let follow = shared.cfg().interface.auto_hide;
+    let mut shown_at = crate::hotkeys::now_ms();
+    // The first page now, while the panel is hidden for the picture.
+    let Some(mut page) = translate_page(&shared, &tr, &ocr, session, follow, true).await else {
+        if reading(session) {
+            READING.store(0, Ordering::SeqCst);
+        }
+        return;
+    };
+    if !follow {
+        return; // stays until F8
+    }
+    tokio::spawn(async move {
+        let mut masks: Vec<[i32; 4]> = capture::own_rects(&shared);
+        let mut tick = 0u32;
+        let mut changed = 0;
+        loop {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            if !reading(session) {
+                return;
+            }
+            // Someone else cleared the translation (region pick, F8 in the panel…).
+            if shared.ui.lock().unwrap().interface.is_none() {
+                READING.store(0, Ordering::SeqCst);
+                return;
+            }
+            tick += 1;
+            let mut moved = crate::hotkeys::last_scroll_ms() > shown_at;
+            // Scrollbar dragging, touchpads, page loads: the picture itself changed.
+            // Our own drawings (and the panel) are blanked in both pictures.
+            if !moved && tick.is_multiple_of(3) {
+                if let Ok(mut f) = capture::capture(page.area) {
+                    for m in capture::own_rects(&shared) {
+                        if !masks.contains(&m) {
+                            masks.push(m);
+                        }
+                    }
+                    capture::apply_masks(&mut f, page.area, &masks);
+                    capture::apply_masks(&mut page.frame, page.area, &masks);
+                    let d = coarse_diff(&coarse(&page.frame), &coarse(&f));
+                    changed = if d > 0.04 { changed + 1 } else { 0 };
+                    moved = changed >= 2;
+                }
+            }
+            if !moved {
+                continue;
+            }
+            // Hide at once, keep the mode on.
+            let gen = shared.interface_gen.fetch_add(1, Ordering::SeqCst) + 1;
+            shared.ui(|u| {
+                if u.interface.is_some() {
+                    u.interface = Some(InterfaceView { items: vec![], pending: 0, generation: gen });
+                }
+            });
+            // Wait until the page stands still: no wheel for 0.35 s and two
+            // pictures 150 ms apart match.
+            let mut prev: Option<Vec<f32>> = None;
+            loop {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                if !reading(session) {
+                    return;
+                }
+                if crate::hotkeys::now_ms().saturating_sub(crate::hotkeys::last_scroll_ms()) < 350 {
+                    prev = None;
+                    continue;
+                }
+                let area = capture::game_area(&shared.cfg());
+                let Ok(f) = capture::capture_clean(&shared, area) else { continue };
+                let c = coarse(&f);
+                if prev.as_ref().is_some_and(|p| p.len() == c.len() && coarse_diff(p, &c) < 0.01) {
+                    break;
+                }
+                prev = Some(c);
+            }
+            if shared.ui.lock().unwrap().interface.is_none() {
+                READING.store(0, Ordering::SeqCst);
+                return;
+            }
+            shown_at = crate::hotkeys::now_ms();
+            match translate_page(&shared, &tr, &ocr, session, true, false).await {
+                Some(p) => page = p,
+                None => {
+                    if reading(session) {
+                        READING.store(0, Ordering::SeqCst);
+                    }
+                    return;
+                }
+            }
+            masks = capture::own_rects(&shared);
+            changed = 0;
+        }
+    });
+}
+
+/// The picture a page was read from (for noticing that it moved).
+struct Page {
+    frame: Frame,
+    area: PxRect,
+}
+
+/// OCR the reader, show the bubbles (cached ones at once) and translate the
+/// rest in the background. `follow`: an empty page keeps the reading mode on.
+/// `first`: the F8 press itself (wait for the page to settle, report an empty
+/// page); later pages come after the reading mode saw the page stand still.
+/// None = the mode ended (F8 pressed meanwhile, or a capture/OCR error).
+async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, session: u64, follow: bool, first: bool) -> Option<Page> {
     let gen = shared.interface_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let cfg = shared.cfg();
-    // The game's own picture when it is in front (no taskbar or other windows).
+    // The reader's own picture when it is in front (no taskbar or other windows).
     let full: PxRect = capture::game_area(&cfg);
-    // Game menus open with an animation (labels slide and grow): a picture taken
-    // mid-animation gives boxes smaller than the final text, and the original
-    // then shows around the translation. Wait until two pictures 250 ms apart
-    // match (at most ~1.5 s).
-    let mut frame = match capture::capture_clean(&shared, full) {
+    // Wait until two pictures 250 ms apart match (at most ~1.5 s): a page that
+    // is still loading or sliding gives half-drawn bubbles.
+    let mut frame = match capture::capture_clean(shared, full) {
         Ok(f) => f,
         Err(e) => {
-            shared.ui(|u| u.notice(format!("Захват экрана: {e}")));
-            return;
+            shared.ui(|u| {
+                u.interface = None;
+                u.notice(format!("Захват экрана: {e}"))
+            });
+            return None;
         }
     };
-    for _ in 0..6 {
+    for _ in 0..(if first { 6 } else { 0 }) {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        let Ok(next) = capture::capture_clean(&shared, full) else { break };
+        let Ok(next) = capture::capture_clean(shared, full) else { break };
         let d = coarse_diff(&coarse(&frame), &coarse(&next));
         frame = next;
         if d < 0.012 {
             break;
         }
         tracing::debug!(target: "interface", "экран ещё меняется ({d:.3}), жду");
+    }
+    if !reading(session) {
+        return None;
     }
     let up = upscale_for(cfg.interface.upscale, full.h);
     shared.ui(|u| u.interface = Some(InterfaceView { items: vec![], pending: 1, generation: gen }));
@@ -123,12 +249,15 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
                 u.interface = None;
                 u.notice(format!("OCR: {e}"))
             });
-            return;
+            return None;
         }
     };
+    if !reading(session) || shared.interface_gen.load(Ordering::SeqCst) != gen {
+        return None;
+    }
     let ocr_ms = t0.elapsed().as_millis();
     let n_lines = lines.len();
-    let items: Vec<InterfaceItem> = bubbles(&lines, lang, &tr, &frame)
+    let items: Vec<InterfaceItem> = bubbles(&lines, lang, tr, &frame)
         .into_iter()
         .take(cfg.interface.max_lines)
         .map(|mut it| {
@@ -146,12 +275,21 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
     for it in &items {
         tracing::debug!(target: "interface", "пузырь {}×{} строк: {}", it.rect.w as i32, it.lines, it.src);
     }
+    let page = Page { frame: frame.clone(), area: full };
     if items.is_empty() {
         shared.ui(|u| {
-            u.interface = None;
-            u.notice(format!("На экране не найден текст ({})", lang.name_ru()))
+            if follow {
+                u.interface = Some(InterfaceView { items: vec![], pending: 0, generation: gen });
+            } else {
+                u.interface = None;
+            }
+            if first && follow {
+                u.notice(format!("Пузырей с текстом ({}) пока не видно — листайте, перевод появится сам. F8 — выключить", lang.name_ru()))
+            } else if first {
+                u.notice(format!("На экране не найден текст ({})", lang.name_ru()))
+            }
         });
-        return;
+        return if follow { Some(page) } else { None };
     }
 
     let preset = cfg.active_model().clone();
@@ -175,46 +313,18 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
     }
     let n_pending = unique.len();
     shared.ui(|u| u.interface = Some(InterfaceView { items, pending: n_pending, generation: gen }));
-
-    // Auto-hide watcher: the game screen changed (menu closed / scrolled).
-    // Everything of ours that was ever on screen (translation labels, the panel
-    // while it was closing) is blanked in both pictures, so only a real change
-    // of the game screen counts. Menus have animated backgrounds (characters,
-    // particles), so the change must be large and last ~1.5 s.
-    if cfg.interface.auto_hide {
-        let sh = shared.clone();
-        let mut base = frame.clone();
-        let mut masks: Vec<[i32; 4]> = capture::own_rects(&shared);
-        tokio::spawn(async move {
-            let mut changed = 0;
-            loop {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                if sh.interface_gen.load(Ordering::SeqCst) != gen {
-                    return;
-                }
-                let Ok(mut f) = capture::capture(full) else { continue };
-                for m in capture::own_rects(&sh) {
-                    if !masks.contains(&m) {
-                        masks.push(m);
-                    }
-                }
-                capture::apply_masks(&mut f, full, &masks);
-                capture::apply_masks(&mut base, full, &masks);
-                let d = coarse_diff(&coarse(&base), &coarse(&f));
-                changed = if d > 0.12 { changed + 1 } else { 0 };
-                if changed >= 3 {
-                    tracing::info!(target: "interface", "экран изменился ({d:.3}) — прячу перевод");
-                    if sh.interface_gen.load(Ordering::SeqCst) == gen {
-                        sh.interface_gen.fetch_add(1, Ordering::SeqCst);
-                        sh.ui(|u| u.interface = None);
-                    }
-                    return;
-                }
-            }
-        });
+    if !unique.is_empty() {
+        let (shared, tr) = (shared.clone(), tr.clone());
+        let game = cfg.general.game_title.clone();
+        tokio::spawn(async move { translate_bubbles(&shared, &tr, &preset, &game, gen, unique).await });
     }
+    Some(page)
+}
 
-    let game = cfg.general.game_title.clone();
+/// Translate the page's new bubbles and put each result into the view `gen`.
+/// Stops when that view is gone (the page moved or F8 was pressed); finished
+/// translations stay in the cache, so the page comes back at once.
+async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &crate::config::ModelPreset, game: &str, gen: u64, unique: Vec<String>) {
     let set_result = |src: &str, dst: String| {
         shared.ui(|u| {
             if let Some(v) = u.interface.as_mut().filter(|v| v.generation == gen) {
@@ -245,7 +355,7 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
         let mut rest: Vec<String> = chunk.clone();
         if chunk.len() > 1 {
             let t0 = std::time::Instant::now();
-            match tr.translate_batch(&preset, &game, &chunk, TextKind::Dialogue).await {
+            match tr.translate_batch(preset, game, &chunk, TextKind::Dialogue).await {
                 Ok(out) => {
                     shared.ui(|u| u.stats.add_llm(t0.elapsed().as_millis() / chunk.len() as u128, false));
                     rest.clear();
@@ -266,7 +376,7 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
             if shared.interface_gen.load(Ordering::SeqCst) != gen {
                 return;
             }
-            let res = tr.translate(&preset, &game, "", &src, TextKind::Dialogue, Opts { use_cache: true, use_history: false }, |_| {}).await;
+            let res = tr.translate(preset, game, "", &src, TextKind::Dialogue, Opts { use_cache: true, use_history: false }, |_| {}).await;
             let dst = match res {
                 Ok(o) => {
                     shared.ui(|u| u.stats.add_llm(o.ms, o.cached));

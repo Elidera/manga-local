@@ -147,7 +147,7 @@ fn scene(u: &UiState, cfg: &Config, screen: (f32, f32), scale: f32) -> Vec<El> {
             }
         }
         if view.pending > 0 {
-            out.push(El::Badge { text: format!("Перевод экрана… осталось {}", view.pending), corner: Corner::TopRight, size_pt: 14.0 });
+            out.push(El::Badge { text: format!("Перевод страницы… осталось {}", view.pending), corner: Corner::TopRight, size_pt: 14.0 });
         }
     } else if cfg.dialogue.mode == "auto" {
         for l in &u.auto_lines {
