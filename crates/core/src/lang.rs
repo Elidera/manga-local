@@ -209,8 +209,63 @@ pub fn is_subtitle(s: &str, lang: Lang) -> bool {
     }
 }
 
+/// Not text of a comic at all: a web address («asurascans.com»,
+/// «https://comic.naver.com/…»), or a line of odd symbols (artwork read as
+/// letters: «쬬결출결흐℃e•결결결결», «mnar•aøur rnvnauøu»), or Latin «words»
+/// without vowels (Russian text of the browser read as Latin: «mrpbl»).
+pub fn is_screen_junk(s: &str) -> bool {
+    let low = s.to_lowercase();
+    if low.contains("http") || low.contains("www.") || low.contains("://") {
+        return true;
+    }
+    // A domain: letters, a dot, a known ending, no space right after the dot.
+    const TLD: &[&str] = &[".com", ".net", ".org", ".ru", ".jp", ".kr", ".io", ".co.", ".me", ".to", ".cc", ".xyz", ".tv", ".info"];
+    if low.split_whitespace().any(|w| TLD.iter().any(|t| w.contains(t) && w.len() > t.len() + 1)) {
+        return true;
+    }
+    let chars: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
+    if chars.is_empty() {
+        return false;
+    }
+    let odd = chars
+        .iter()
+        .filter(|&&c| {
+            !(c.is_alphanumeric() && (c.is_ascii() || text::is_hangul(c) || text::is_kana(c) || text::is_han(c)) || ".,!?…~-—–'\"“”‘’()「」『』【】、。！？：；:;♡♥☆★♪·*/%&+=".contains(c))
+        })
+        .count();
+    if odd >= 3 || odd >= 2 && odd * 4 > chars.len() {
+        return true;
+    }
+    // One syllable repeated with symbols around: «결결결결» next to «℃».
+    if odd >= 1 && chars.windows(4).any(|w| w.iter().all(|&c| c == w[0] && text::is_hangul(c))) {
+        return true;
+    }
+    // Korean with ideographs scattered in it (hanja are written in brackets:
+    // 화괴(花魁)): artwork read as letters.
+    let mut depth = 0;
+    let mut loose_han = 0;
+    for c in s.chars() {
+        match c {
+            '(' | '（' | '[' => depth += 1,
+            ')' | '）' | ']' => depth = (depth - 1).max(0),
+            c if depth == 0 && text::is_han(c) => loose_han += 1,
+            _ => {}
+        }
+    }
+    if loose_han >= 2 && text::hangul_count(s) >= 1 {
+        return true;
+    }
+    // Latin words of five and more letters with no vowel at all («NPCs» is fine).
+    let words: Vec<&str> = s.split(|c: char| !c.is_ascii_alphabetic()).filter(|w| w.len() >= 5).collect();
+    let bare = words.iter().filter(|w| !w.chars().any(|c| "aeiouyAEIOUY".contains(c))).count();
+    !words.is_empty() && bare * 2 >= words.len().max(1) && bare >= 1
+}
+
 /// Is a single OCR line on a game screen (menu label, button) worth translating?
 pub fn is_label(s: &str, lang: Lang) -> bool {
+    if is_screen_junk(s) {
+        return false;
+    }
     match lang {
         // A bubble can hold a single syllable («응», «え»): one letter of the
         // script is enough when the line is mostly that script.
@@ -412,5 +467,17 @@ mod tests {
         assert_eq!(other_page_language(&ko, Lang::Ko), None);
         // Too little to tell.
         assert_eq!(other_page_language(&["Next chapter"], Lang::Ja), None);
+    }
+
+    #[test]
+    fn screen_junk_is_not_text() {
+        for junk in ["https://comic.naver.com/webtoon/detail?", "O asurascans.com", "@ O mangaplus.shueisha.co.jp", "쬬결출결흐℃e•결결결결",
+                     "mnar•aøur rnvnauøu n Kut+.ønø", "raga mrpbl", "曇구수국구국국흐&되目"] {
+            assert!(is_screen_junk(junk), "{junk}");
+        }
+        for ok in ["기교가 끝도 없이 정밀하게 올라가고 있다.", "HEY! WAIT A MINUTE!", "I'M THANKFUL FOR ALL LIFE IN THIS WORLD.", "ㅋㅋㅋㅋ 진짜?",
+                   "今日はいい天気ですね", "대신 값은 치러야지?", "Mr. Kim, 3.5 km away!", "Hmm...", "TSK TSK", "Shh!"] {
+            assert!(!is_screen_junk(ok), "{ok}");
+        }
     }
 }

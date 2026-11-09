@@ -89,6 +89,7 @@ fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found:
             };
             good[*i]
                 || !tr.should_skip(&l.text)
+                    && !manga_core::lang::is_screen_junk(&l.text)
                     && l.text.chars().any(char::is_alphanumeric)
                     && lines.iter().enumerate().any(|(j, o)| j != *i && good[j] && (bubble_of(&o.rect).is_some() && bubble_of(&o.rect) == bubble_of(r) || next_to_text(o)))
         })
@@ -239,8 +240,21 @@ pub async fn read_screen(ocr: &Ocr, frame: &Frame, configured: u32, lang: Lang, 
     let base = upscale_for(configured, frame.height as i32);
     let mut out = Vec::new();
     for (x, w) in frame.content_columns() {
-        let k = if configured != 0 { configured } else { letters_upscale(base, found, x as f32, w as f32) };
         let whole = (x, w) == (0, frame.width);
+        // The letters decide only for a strip cut out of a wide screen (letters
+        // of 10 px); a whole page keeps the usual 2×. Never more than ~8
+        // million pixels for the recognizer (time grows with them).
+        let k = if configured != 0 {
+            configured
+        } else if whole {
+            base
+        } else {
+            let mut k = letters_upscale(base, found, x as f32, w as f32);
+            while k > 1 && (w * k) as u64 * (frame.height * k) as u64 > 8_000_000 {
+                k -= 1;
+            }
+            k.max(1)
+        };
         let piece = if whole { frame.clone() } else { frame.crop(x, 0, w, frame.height) };
         if !whole || k != base {
             tracing::debug!(target: "interface", "распознаю полосу x {x}, ширина {w}, увеличение ×{k}");
@@ -258,7 +272,9 @@ pub async fn read_screen(ocr: &Ocr, frame: &Frame, configured: u32, lang: Lang, 
 fn letters_upscale(base: u32, found: &[manga_core::bubbles::Found], x: f32, w: f32) -> u32 {
     let mut sizes: Vec<f32> = found
         .iter()
-        .filter(|f| !f.vertical && f.char_px >= 5.0)
+        // Real speech bubbles: light paper, a few letters wide (not an eye or a button).
+        .filter(|f| !f.vertical && f.char_px >= 5.0 && f.text.w >= f.char_px * 2.5)
+        .filter(|f| manga_core::image::luma(f.paper[2], f.paper[1], f.paper[0]) > 200)
         .filter(|f| {
             let cx = f.outer.x + f.outer.w / 2.0;
             cx >= x && cx < x + w
@@ -299,6 +315,9 @@ async fn reread_bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
         .iter()
         .filter(|f| !(lang == Lang::Ja && f.vertical))
         .filter(|f| f.text.w >= 12.0 && f.text.h >= 8.0 && f.outer.w * f.outer.h < page * 0.4)
+        // A real bubble: light paper and a few letters wide (eyes, buttons and
+        // glints are found as «bubbles» too, and each re-read costs time).
+        .filter(|f| manga_core::image::luma(f.paper[2], f.paper[1], f.paper[0]) > 200 && f.text.w >= f.char_px * 2.5 && f.lines >= 1)
         .filter(|f| {
             let read: Vec<&OcrLine> = lines.iter().filter(|l| inside(&l.rect, &f.outer)).collect();
             let Some(first) = read.first() else { return true };
@@ -307,11 +326,16 @@ async fn reread_bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
             let light = manga_core::image::luma(f.paper[2], f.paper[1], f.paper[0]) > 200;
             light && (u.y - f.text.y > h * 0.9 || (f.text.y + f.text.h) - (u.y + u.h) > h * 0.9)
         })
-        .take(12)
+        .take(8)
         .collect();
     let mut out: Vec<OcrLine> = lines.to_vec();
     let mut added = 0;
+    let t0 = Instant::now();
     for f in todo {
+        // At most ~0.4 s on this per page: reading speed matters more.
+        if t0.elapsed() > Duration::from_millis(400) {
+            break;
+        }
         let pad = 4.0;
         let x = (f.outer.x - pad).max(0.0) as u32;
         let y = (f.outer.y - pad).max(0.0) as u32;

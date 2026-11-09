@@ -498,6 +498,7 @@ impl Translator {
                 Err(Reject::NotTranslated) => return Err(anyhow!("модель вернула непереведённый текст")),
                 Err(Reject::TooLong) => return Err(anyhow!("модель выдала слишком длинный ответ")),
                 Err(Reject::Empty) => return Err(anyhow!("пустой ответ модели")),
+                Err(Reject::Refusal) => return Err(anyhow!("модель не перевела: исходный текст не похож на реплику")),
             };
             let missed: Vec<String> = {
                 let g = self.glossary.lock().unwrap();

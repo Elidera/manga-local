@@ -458,6 +458,34 @@ pub enum Reject {
     NotTranslated,
     /// Output is wildly longer than any sane translation (rambling / hallucination).
     TooLong,
+    /// The model talks about the text instead of translating it («Это не похоже
+    /// на текст…», «(Нет перевода)»): the source was OCR noise or a web address.
+    Refusal,
+}
+
+/// Does the answer talk about the task instead of translating?
+pub fn is_refusal(s: &str) -> bool {
+    let low = s.to_lowercase();
+    const SIGNS: &[&str] = &[
+        "не похоже на текст",
+        "не является осмысленн",
+        "не удалось распознать",
+        "не удалось перевести",
+        "нет текста для перевода",
+        "нет перевода",
+        "невозможно перевести",
+        "не могу перевести",
+        "предоставьте текст",
+        "предоставьте читаемый",
+        "предоставьте мангу",
+        "пожалуйста, предоставьте",
+        "не текст для перевода",
+        "это ссылка",
+        "просматривать внешние",
+        "готов работать как",
+        "как профессиональный переводчик",
+    ];
+    SIGNS.iter().any(|w| low.contains(w)) || low.starts_with('(') && low.ends_with(')') && low.contains("перевод")
 }
 
 fn strip_think(s: &str) -> String {
@@ -529,6 +557,9 @@ pub fn clean_output(raw: &str, source: &str) -> Result<String, Reject> {
     };
     if s.is_empty() {
         return Err(Reject::Empty);
+    }
+    if is_refusal(s) {
+        return Err(Reject::Refusal);
     }
     if text::han_ratio(s) > 0.3 || share(s, text::hangul_count) > 0.3 || share(s, text::kana_count) > 0.3 {
         return Err(Reject::NotTranslated);
@@ -731,6 +762,11 @@ mod tests {
         assert_eq!(clean_output("我们去开封。\n→ Идём", "我们去开封。").unwrap(), "Идём");
         assert_eq!(clean_output("我们去开封", "我们去开封"), Err(Reject::NotTranslated));
         assert_eq!(clean_output("  ", "x"), Err(Reject::Empty));
+        // Noise read from the screen: the model explains instead of translating.
+        assert_eq!(clean_output("Это не похоже на текст, который можно перевести. Пожалуйста, предоставьте читаемый текст.", "raga mrpbl"), Err(Reject::Refusal));
+        assert_eq!(clean_output("(Нет перевода)", "Vihc\""), Err(Reject::Refusal));
+        assert_eq!(clean_output("(Невозможно перевести, так как предоставленный текст не является осмысленным корейским языком.)", "결결결"), Err(Reject::Refusal));
+        assert_eq!(clean_output("Нет, я не пойду.", "No, I won't go."), Ok("Нет, я не пойду.".into()));
         assert_eq!(clean_output("Да.\n\nПримечание: ...", "是。").unwrap(), "Да.");
     }
 }
