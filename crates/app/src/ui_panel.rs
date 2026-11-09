@@ -440,7 +440,7 @@ pub fn panel_ui(ctx: &egui::Context, shared: &Arc<Shared>, st: &mut PanelState, 
         });
 
     egui::CentralPanel::default().frame(egui::Frame::none().fill(BG).inner_margin(Margin::symmetric(24.0, 20.0))).show(ctx, |ui| {
-        header(ui, shared, st.tab);
+        dirty |= header(ui, shared, st.tab);
         ui.add_space(12.0);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.set_max_width(ui.available_width());
@@ -473,7 +473,9 @@ fn mascot_mood(shared: &Arc<Shared>) -> crate::mascot::Mood {
 }
 
 /// Top line of the content: the page name and what the program is doing.
-fn header(ui: &mut Ui, shared: &Arc<Shared>, tab: Tab) {
+/// Returns true when the language was changed there.
+fn header(ui: &mut Ui, shared: &Arc<Shared>, tab: Tab) -> bool {
+    let mut changed = false;
     let lang = shared.cfg().source_lang();
     let server = shared.ui.lock().unwrap().server.clone();
     let title = match tab {
@@ -486,7 +488,7 @@ fn header(ui: &mut Ui, shared: &Arc<Shared>, tab: Tab) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(title).size(24.0).family(FontFamily::Name("bold".into())).color(TEXT));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            status_pill(ui, &format!("{} → русский", lang.name_ru()), WEAK);
+            changed = lang_pill(ui, shared, lang);
             match server {
                 Some(s) if s.is_ready() => status_pill(ui, "● Нейросеть готова", GREEN),
                 Some(crate::state::ServerStatus::Failed(_)) => status_pill(ui, "● Ошибка модели", RED),
@@ -495,6 +497,42 @@ fn header(ui: &mut Ui, shared: &Arc<Shared>, tab: Tab) {
             }
         });
     });
+    changed
+}
+
+/// «английский → русский ▾»: a click opens the list of languages of the text.
+fn lang_pill(ui: &mut Ui, shared: &Arc<Shared>, lang: manga_core::lang::Lang) -> bool {
+    use manga_core::lang::Lang;
+    let resp = egui::Frame::none()
+        .fill(WEAK.gamma_multiply(0.16))
+        .rounding(Rounding::same(999.0))
+        .inner_margin(Margin::symmetric(12.0, 5.0))
+        .show(ui, |ui| {
+            ui.label(RichText::new(format!("{} → русский  ▾", lang.name_ru())).color(WEAK).strong());
+        })
+        .response
+        .interact(egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Язык текста на страницах — нажмите, чтобы сменить");
+    let id = ui.make_persistent_id("lang_pill");
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(id));
+    }
+    let mut changed = false;
+    egui::popup_below_widget(ui, id, &resp, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        ui.set_min_width(170.0);
+        for (l, what) in [(Lang::Ko, "манхва"), (Lang::Ja, "манга"), (Lang::Zh, "маньхуа"), (Lang::En, "комиксы, сканы")] {
+            let name = l.name_ru();
+            let mut title = name.chars().next().map(|c| c.to_uppercase().collect::<String>() + &name[c.len_utf8()..]).unwrap_or_default();
+            title.push_str(&format!("  ·  {what}"));
+            if ui.selectable_label(l == lang, title).clicked() && l != lang {
+                shared.cfg.write().unwrap().general.source_lang = l.code().into();
+                shared.ui(|u| u.lang_offer = None);
+                changed = true;
+            }
+        }
+    });
+    changed
 }
 
 fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
