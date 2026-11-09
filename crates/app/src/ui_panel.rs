@@ -23,6 +23,7 @@ pub const WEAK: Color32 = Color32::from_rgb(184, 180, 204);
 
 /// Ready-made accent colours of the panel (the reader may also pick any).
 pub const ACCENTS: &[(&str, [u8; 3])] = &[
+    ("Фуксия", [229, 0, 232]),
     ("Бирюза", [60, 201, 180]),
     ("Янтарь", [255, 181, 71]),
     ("Лаванда", [157, 140, 255]),
@@ -30,7 +31,7 @@ pub const ACCENTS: &[(&str, [u8; 3])] = &[
     ("Коралл", [255, 122, 144]),
 ];
 
-static ACCENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3C_C9_B4);
+static ACCENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0xE5_00_E8);
 
 /// The accent colour the reader chose (buttons, selection, icons).
 pub fn accent() -> Color32 {
@@ -644,7 +645,17 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
             }
         }
         None => {
-            if big_action(ui, "Перевести файлы главы", "Папка с картинками, ZIP или CBZ: текст сотрётся, перевод впишется в картинки, рядом появится переведённая глава", "", false, full) {
+            // A chapter dragged onto the panel (folder, ZIP/CBZ or a picture of the folder).
+            let (dragging, dropped) = ui.ctx().input(|i| (!i.raw.hovered_files.is_empty(), i.raw.dropped_files.iter().find_map(|f| f.path.clone())));
+            if let Some(p) = dropped {
+                shared.send(Command::TranslateFiles(p));
+            }
+            let (title, sub) = if dragging {
+                ("Отпустите — переведу эту главу", "Папка, ZIP, CBZ или любая картинка из папки главы")
+            } else {
+                ("Перевести файлы главы", "Нажмите или перетащите сюда папку, ZIP или CBZ: текст сотрётся, перевод впишется в картинки, рядом появится переведённая глава")
+            };
+            if big_action(ui, title, sub, "", dragging, full) {
                 let sh = shared.clone();
                 std::thread::spawn(move || {
                     if let Some(p) = crate::filepick::open_chapter() {
@@ -783,9 +794,9 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
     let mut game_changed = false;
     let mut any = false;
 
-    any |= search_card(ui, "Вид панели", "вид панели цвет оформления тема бирюза янтарь лаванда голубой коралл свой цвет", |ui| {
+    any |= search_card(ui, "Вид панели", "вид панели цвет оформления тема фуксия розовый бирюза янтарь лаванда голубой коралл свой цвет", |ui| {
         let g = &mut c.general;
-        if search_hit("цвет оформления бирюза янтарь лаванда голубой коралл свой цвет") {
+        if search_hit("цвет оформления фуксия розовый бирюза янтарь лаванда голубой коралл свой цвет") {
             ui.label("Цвет оформления");
             hint(ui, "Кнопки, выбранный раздел и переключатели. Можно взять готовый или свой любой.");
             ui.add_space(4.0);
@@ -813,17 +824,12 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
             });
         }
     });
-    any |= search_card(ui, "Где читаете", "где читаете браузер сайт весь экран программа язык текста корейский японский китайский английский заголовок окна название тайтла манга манхва маньхуа", |ui| {
+    any |= search_card(ui, "Где читаете", "где читаете браузер сайт весь экран программа заголовок окна название тайтла манга манхва маньхуа", |ui| {
         let g = &mut c.general;
         let options: Vec<(&str, &str)> = crate::config::PROFILES.iter().map(|p| (p.id, p.name)).collect();
         let mut prof = g.profile.clone();
         if setting_row(ui, "Где читаете", "Браузер — перевод только пока браузер впереди; весь экран — любая программа для чтения", |ui| segmented(ui, &mut prof, &options)) {
             g.profile = prof;
-            game_changed = true;
-        }
-        if setting_row(ui, "Язык текста", "Манхва — корейский, манга — японский, маньхуа — китайский", |ui| {
-            segmented(ui, &mut g.source_lang, &[("ko", "Корейский"), ("ja", "Японский"), ("zh", "Китайский"), ("en", "Английский")])
-        }) {
             game_changed = true;
         }
         if g.profile == "custom" {

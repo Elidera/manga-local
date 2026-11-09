@@ -197,7 +197,7 @@ impl Default for General {
             visible_in_screenshots: false,
             tray_hint_shown: false,
             comic_font_set: false,
-            accent: [60, 201, 180],
+            accent: [229, 0, 232],
         }
     }
 }

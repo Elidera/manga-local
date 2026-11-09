@@ -307,6 +307,7 @@ impl MangaApp {
                 .with_inner_size([880.0, 720.0])
                 .with_min_inner_size([720.0, 480.0])
                 .with_icon(crate::mascot::icon_data())
+                .with_drag_and_drop(true)
                 .with_active(true),
             |ctx, _class| {
                 protect_now = true;
