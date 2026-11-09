@@ -14,7 +14,7 @@ use windows::Win32::System::JobObjects::{
 };
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, FindWindowW, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible, GetSystemMetrics, GetWindowLongPtrW, GetWindowTextW,
+    EnumChildWindows, EnumWindows, FindWindowW, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowRect, IsIconic, IsWindow, IsWindowVisible, GetSystemMetrics, GetWindowLongPtrW, GetWindowTextW,
     SetForegroundWindow, SetWindowDisplayAffinity, ShowWindow, SW_RESTORE,
     SetWindowLongPtrW, GWL_EXSTYLE, SM_CXSCREEN, SM_CYSCREEN, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST,
@@ -255,6 +255,9 @@ pub fn game_in_foreground(window_match: &str, class_hint: &str) -> bool {
         class_matches(&class, class_hint)
             || window_match.split('|').map(str::trim).filter(|m| !m.is_empty()).any(|m| title.contains(&m.to_lowercase()))
     };
+    if result {
+        LAST_READER.store(unsafe { GetForegroundWindow() }.0 as isize, std::sync::atomic::Ordering::Relaxed);
+    }
     let key = format!("{title_raw}\u{1}{class}");
     let mut last = LAST.lock().unwrap();
     if *last != key {
@@ -271,6 +274,27 @@ pub fn game_in_foreground(window_match: &str, class_hint: &str) -> bool {
     result
 }
 
+/// The reader window last seen in front.
+static LAST_READER: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// F8 pressed while something else is in front (the taskbar, our panel, the
+/// task manager): bring back the reader window used last — or the frontmost
+/// matching one — and say whether it is in front now.
+pub fn bring_reader_back(window_match: &str, class_hint: &str) -> bool {
+    let last = LAST_READER.load(std::sync::atomic::Ordering::Relaxed);
+    let h = if last != 0 && unsafe { IsWindow(HWND(last as *mut _)).as_bool() && IsWindowVisible(HWND(last as *mut _)).as_bool() } {
+        Some(last)
+    } else {
+        find_game_window(window_match, class_hint).map(|g| g.hwnd)
+    };
+    let Some(h) = h else { return false };
+    bring_to_front(h);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let ok = unsafe { GetForegroundWindow() }.0 as isize == h;
+    tracing::info!("F8 при другом окне впереди: окно читалки {}", if ok { "возвращено вперёд" } else { "вернуть не удалось" });
+    ok
+}
+
 /// The game's window found among all windows (for the self-check, when the
 /// panel and not the game is in front).
 pub struct GameWindow {
@@ -280,6 +304,7 @@ pub struct GameWindow {
     pub rect: (i32, i32, i32, i32),
     pub topmost: bool,
     pub minimized: bool,
+    pub hwnd: isize,
 }
 
 pub fn find_game_window(window_match: &str, class_hint: &str) -> Option<GameWindow> {
@@ -314,7 +339,7 @@ pub fn find_game_window(window_match: &str, class_hint: &str) -> Option<GameWind
                 let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
                 ((r.left, r.top, r.right - r.left, r.bottom - r.top), ex & WS_EX_TOPMOST.0 as isize != 0, IsIconic(h).as_bool())
             };
-            return Some(GameWindow { title, class, rect, topmost, minimized });
+            return Some(GameWindow { title, class, rect, topmost, minimized, hwnd: h.0 as isize });
         }
     }
     None

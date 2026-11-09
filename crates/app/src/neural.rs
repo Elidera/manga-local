@@ -59,6 +59,11 @@ pub fn init(dir: PathBuf) {
 /// Follow the setting «Распознавание текста».
 pub fn set_on(on: bool) {
     ON.store(on && available(), Ordering::Relaxed);
+    if !on {
+        // Windows OCR chosen: the models leave memory (a page being read keeps
+        // its copy until it is done).
+        *CACHE.lock().unwrap() = None;
+    }
 }
 
 pub fn wanted() -> bool {
@@ -136,6 +141,8 @@ pub fn engine(lang: Lang) -> Option<Arc<Engine>> {
     if let Some(e) = map.get(key) {
         return Some(e.clone());
     }
+    // One language at a time: the reader of another one leaves memory.
+    map.clear();
     match load(dir, lang) {
         Ok(e) => {
             tracing::info!("распознавание-нейросеть: загружено для языка «{}»", lang.name_ru());

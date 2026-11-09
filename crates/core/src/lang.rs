@@ -252,7 +252,7 @@ pub fn is_screen_junk(s: &str) -> bool {
             _ => {}
         }
     }
-    if loose_han >= 2 && text::hangul_count(s) >= 1 {
+    if loose_han >= 2 && text::hangul_count(s) >= 1 || loose_han >= 1 && (1..=3).contains(&text::hangul_count(s)) {
         return true;
     }
     // Latin words of five and more letters with no vowel at all («NPCs» is fine).
@@ -472,11 +472,11 @@ mod tests {
     #[test]
     fn screen_junk_is_not_text() {
         for junk in ["https://comic.naver.com/webtoon/detail?", "O asurascans.com", "@ O mangaplus.shueisha.co.jp", "쬬결출결흐℃e•결결결결",
-                     "mnar•aøur rnvnauøu n Kut+.ønø", "raga mrpbl", "曇구수국구국국흐&되目"] {
+                     "mnar•aøur rnvnauøu n Kut+.ønø", "raga mrpbl", "曇구수국구국국흐&되目", "心\"네"] {
             assert!(is_screen_junk(junk), "{junk}");
         }
         for ok in ["기교가 끝도 없이 정밀하게 올라가고 있다.", "HEY! WAIT A MINUTE!", "I'M THANKFUL FOR ALL LIFE IN THIS WORLD.", "ㅋㅋㅋㅋ 진짜?",
-                   "今日はいい天気ですね", "대신 값은 치러야지?", "Mr. Kim, 3.5 km away!", "Hmm...", "TSK TSK", "Shh!"] {
+                   "今日はいい天気ですね", "대신 값은 치러야지?", "Mr. Kim, 3.5 km away!", "Hmm...", "TSK TSK", "Shh!", "화괴(花魁)가 왔다"] {
             assert!(!is_screen_junk(ok), "{ok}");
         }
     }

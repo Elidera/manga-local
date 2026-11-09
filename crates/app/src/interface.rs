@@ -136,6 +136,14 @@ fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found:
             let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
             let in_bubble = outlines.iter().any(|o| cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h);
             let sfx = !in_bubble && busy && manga_core::lang::is_sfx_like(&src, lang);
+            // One or two small letters alone outside every bubble («름», «4수»):
+            // bits of the drawing or of the site, not a phrase. Big ones are sounds.
+            let letters = src.chars().filter(|c| c.is_alphanumeric()).count();
+            let fragment = !in_bubble && g.len() == 1 && letters <= 2 && !src.contains(['!', '?', '！', '？']) && line_h < frame.height as f32 * 0.035;
+            if fragment {
+                tracing::debug!(target: "interface", "обрывок вне пузыря пропущен: «{src}»");
+                src.clear();
+            }
             InterfaceItem { fg, busy, bg, rect, src, dst: None, line_h, lines: g.len(), patch: patch.map(Arc::new), sfx }
         })
         .filter(|it| !it.src.is_empty())
@@ -506,6 +514,20 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     let cfg = shared.cfg();
     if tr.ensure_title(&cfg.general.profile, &cfg.general.game_title) {
         shared.ui(|u| u.name_offers.clear());
+    }
+    // F8 pressed with the taskbar, our panel or another program in front: the
+    // reader window comes back first, so its page (not the whole screen with
+    // tabs and other windows) is read.
+    if first && cfg.watches_window() && !cfg.window_in_front() {
+        let class = crate::config::profile(&cfg.general.profile).window_class;
+        if !tokio::task::block_in_place(|| crate::win::bring_reader_back(&cfg.general.window_match, class)) && cfg.general.profile == "browser" {
+            READING.store(0, Ordering::SeqCst);
+            shared.ui(|u| {
+                u.interface = None;
+                u.notice("Впереди не браузер: откройте главу в браузере и нажмите F8 ещё раз")
+            });
+            return None;
+        }
     }
     // The reader's own picture when it is in front (no taskbar or other windows).
     let full: PxRect = capture::game_area(&cfg);
