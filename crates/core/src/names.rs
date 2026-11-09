@@ -234,11 +234,20 @@ pub fn match_source(ru: &str, src: &str, lang: Lang) -> Option<String> {
 pub struct NameWatch {
     seen: HashMap<(String, String), HashSet<String>>,
     offered: HashSet<String>,
+    /// Names settled in this reading: original → Russian form.
+    forms: HashMap<String, String>,
 }
 
 impl NameWatch {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Names settled in this reading (seen in two bubbles) whose original is
+    /// in `text`: told to the model so a name does not change from page to
+    /// page, even before the reader adds it to the title's dictionary.
+    pub fn settled_in(&self, text: &str) -> Vec<(String, String)> {
+        self.forms.iter().filter(|(o, _)| text.contains(o.as_str())).map(|(o, r)| (o.clone(), r.clone())).collect()
     }
 
     /// Look at one translated bubble; returns the pairs to offer now.
@@ -253,6 +262,11 @@ impl NameWatch {
             let bubbles = self.seen.entry((orig.clone(), name.clone())).or_default();
             bubbles.insert(src.to_string());
             if bubbles.len() >= 2 {
+                // From now on the model is told this name for the rest of the reading.
+                let form = self.forms.entry(orig.clone()).or_insert_with(|| name.clone());
+                if name.chars().count() < form.chars().count() {
+                    *form = name.clone(); // the shortest form: usually not declined («Минджун», not «Минджуну»)
+                }
                 self.offered.insert(orig.clone());
                 out.push((orig, name));
             }
@@ -298,6 +312,8 @@ mod tests {
         assert!(w.observe("지수야, 뭐 해?", "Джису, что делаешь?", Lang::Ko, none).is_empty(), "the same bubble again does not count");
         assert_eq!(w.observe("지수가 웃었다.", "Джису улыбнулась.", Lang::Ko, none), [("지수".to_string(), "Джису".to_string())]);
         assert!(w.observe("지수야!", "Джису!", Lang::Ko, none).is_empty(), "offered once");
+        assert_eq!(w.settled_in("지수가 왔다"), [("지수".to_string(), "Джису".to_string())]);
+        assert!(w.settled_in("민준이 왔다").is_empty());
         let mut w2 = NameWatch::new();
         w2.observe("지수야, 뭐 해?", "Джису, что делаешь?", Lang::Ko, |s| s == "지수");
         assert!(w2.observe("지수가 웃었다.", "Джису улыбнулась.", Lang::Ko, |s| s == "지수").is_empty(), "known names are skipped");

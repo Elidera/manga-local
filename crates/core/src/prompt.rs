@@ -284,8 +284,8 @@ pub const BATCH_SEP: &str = "|||";
 /// `context`: the last bubbles of the previous page (original, translation) —
 /// so the model keeps who speaks to whom, genders and names across pages. They
 /// are shown for reference only; the numbered items keep the answer apart.
-/// `tones`: the intonation of each item (may be empty), told to instruct models.
-pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &str, kind: TextKind, context: &[(&str, &str)], tones: &[crate::tone::Tone]) -> Vec<Message> {
+/// `hints`: the intonation and room of each item (may be empty), told to instruct models.
+pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &str, kind: TextKind, context: &[(&str, &str)], hints: &[crate::tone::Hint]) -> Vec<Message> {
     let n = items.len();
     // Numbered so a dropped or merged item does not shift all the others.
     let joined = items.iter().enumerate().map(|(i, s)| format!("[{}]{s}", i + 1)).collect::<Vec<_>>().join(BATCH_SEP);
@@ -355,7 +355,10 @@ pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &s
                  где значение — перевод на русский. Только JSON, без пояснений.\n\
                  10. Сохраняй манеру речи: заикание (Н-нет, Я… я), обрывы фраз («…»), «!!» и «?!» на конце. \
                  Не исправляй и не «причёсывай» речь героя. Если у реплики указана «интонация»: крик — коротко и резко, \
-                 с теми же «!»; шёпот — тихо и коротко; заикание — сохрани заикание через дефис; обрыв — оставь фразу недоговорённой."
+                 с теми же «!»; шёпот — тихо и коротко; заикание — сохрани заикание через дефис; обрыв — оставь фразу недоговорённой.\n\
+                 11. «длина» — сколько примерно букв помещается в пузырь: уложись в неё (проще и короче, смысл сохрани). \
+                 «продолжение» — реплика продолжает фразу из названной: переведи их как одно предложение, разбитое на те же части, \
+                 начало не повторяй."
             ));
             let mut u = String::new();
             if !terms.is_empty() {
@@ -373,7 +376,7 @@ pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &s
                 u.push('\n');
             }
             u.push_str("Переведи на русский:\n");
-            u.push_str(&batch_json_toned(items, tones));
+            u.push_str(&batch_json_toned(items, hints));
             vec![Message { role: "system", content: sys }, Message { role: "user", content: u }]
         }
     }
@@ -391,17 +394,29 @@ pub fn batch_json(items: &[&str]) -> String {
     format!("{{\n{}\n}}", body.join(",\n"))
 }
 
-/// As `batch_json`, with the intonation of a bubble that has one:
-/// {"02": {"текст": "…", "интонация": "крик"}}.
-pub fn batch_json_toned(items: &[&str], tones: &[crate::tone::Tone]) -> String {
+/// As `batch_json`, with what is known about a bubble:
+/// {"02": {"текст": "…", "интонация": "крик", "длина": "до 30 букв", "продолжение": "реплики 01"}}.
+pub fn batch_json_toned(items: &[&str], hints: &[crate::tone::Hint]) -> String {
     let body: Vec<String> = items
         .iter()
         .enumerate()
         .map(|(i, s)| {
             let text = serde_json::Value::String(s.to_string());
-            match tones.get(i).and_then(|t| t.label()) {
-                Some(l) => format!("  \"{}\": {{\"текст\": {text}, \"интонация\": \"{l}\"}}", batch_key(i)),
-                None => format!("  \"{}\": {text}", batch_key(i)),
+            let h = hints.get(i).copied().unwrap_or_default();
+            let mut extra = String::new();
+            if let Some(l) = h.tone.label() {
+                extra.push_str(&format!(", \"интонация\": \"{l}\""));
+            }
+            if h.room >= 4 {
+                extra.push_str(&format!(", \"длина\": \"до {} букв\"", h.room));
+            }
+            if i > 0 && crate::tone::continues(items[i - 1], s) {
+                extra.push_str(&format!(", \"продолжение\": \"реплики {}\"", batch_key(i - 1)));
+            }
+            if extra.is_empty() {
+                format!("  \"{}\": {text}", batch_key(i))
+            } else {
+                format!("  \"{}\": {{\"текст\": {text}{extra}}}", batch_key(i))
             }
         })
         .collect();
@@ -824,10 +839,13 @@ mod tests {
         let m = build_batch(PromptStyle::Instruct, &["背包", "任务"], &[], "G", TextKind::Interface, &[], &[]);
         assert_eq!(m[0].role, "system");
         assert!(m[1].content.contains("\"01\": \"背包\""), "{}", m[1].content);
-        let shout = crate::tone::detect("STOP!!", 1.0);
-        let m = build_batch(PromptStyle::Instruct, &["STOP!!", "ok"], &[], "", TextKind::Dialogue, &[], &[shout, crate::tone::Tone::default()]);
+        let shout = crate::tone::Hint { tone: crate::tone::detect("STOP!!", 1.0), room: 0 };
+        let m = build_batch(PromptStyle::Instruct, &["STOP!!", "ok"], &[], "", TextKind::Dialogue, &[], &[shout, crate::tone::Hint::default()]);
         assert!(m[1].content.contains("\"01\": {\"текст\": \"STOP!!\", \"интонация\": \"крик\"}"), "{}", m[1].content);
         assert!(m[1].content.contains("\"02\": \"ok\""));
+        let m = build_batch(PromptStyle::Instruct, &["If you touch her again...", "...you're dead."], &[], "", TextKind::Dialogue, &[], &[crate::tone::Hint { room: 30, ..Default::default() }]);
+        assert!(m[1].content.contains("\"длина\": \"до 30 букв\""), "{}", m[1].content);
+        assert!(m[1].content.contains("\"02\": {\"текст\": \"...you're dead.\", \"продолжение\": \"реплики 01\"}"), "{}", m[1].content);
         // JSON answers: in any key order, with talk around, keys with or without the zero.
         assert_eq!(parse_batch_any("Вот перевод:\n{\"02\": \"Задания\", \"01\": \"Инвентарь\"}", 2), vec![Some("Инвентарь".to_string()), Some("Задания".to_string())]);
         assert_eq!(parse_batch_any("{\"1\": \"Инвентарь\"}", 2), vec![Some("Инвентарь".to_string()), None]);

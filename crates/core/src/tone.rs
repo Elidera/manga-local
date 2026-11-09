@@ -42,6 +42,33 @@ impl Tone {
     }
 }
 
+/// What the model is told about one bubble besides its text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Hint {
+    pub tone: Tone,
+    /// About how many Russian letters fit into the bubble at a readable size (0 = unknown).
+    pub room: usize,
+}
+
+/// About how many Russian letters fit into a box of `w` × `h` px at the
+/// size of the original letters (`line_h` px high, not below 13 px).
+pub fn room(w: f32, h: f32, line_h: f32) -> usize {
+    let fs = (line_h * 0.82).max(13.0);
+    let per_line = (w / (fs * 0.56)).floor().max(1.0);
+    let lines = (h / (fs * 1.2)).floor().max(1.0);
+    (per_line * lines) as usize
+}
+
+/// Does `next` go on with the phrase `prev` broke off («Если ты ещё раз…» →
+/// «…тронешь её, ты труп»)?
+pub fn continues(prev: &str, next: &str) -> bool {
+    let p = prev.trim_end();
+    let n = next.trim_start();
+    let starts_dots = n.starts_with('…') || n.starts_with("..") || n.starts_with('‥');
+    let ends_open = p.ends_with('…') || p.ends_with("..") || p.ends_with('‥') || p.ends_with(',') || p.ends_with('，') || p.ends_with('、') || p.ends_with('—');
+    starts_dots && ends_open || ends_open && n.chars().next().is_some_and(|c| c.is_lowercase())
+}
+
 /// The punctuation a phrase ends with, normalised: «...» → «…», «！» → «!».
 fn ending(s: &str) -> String {
     let t = s.trim_end();
@@ -158,6 +185,16 @@ mod tests {
         assert!(detect("그게 아니라...", 1.0).trailing);
         assert!(!detect("뭐?!", 1.0).trailing);
         assert!(detect("Hello.", 1.0).is_plain());
+    }
+
+    #[test]
+    fn split_phrases_and_room() {
+        assert!(continues("If you touch her again...", "...you're dead."));
+        assert!(continues("Если ты ещё раз…", "…тронешь её, ты труп"));
+        assert!(continues("I was going to say,", "maybe tomorrow."));
+        assert!(!continues("Hello.", "...what?"));
+        assert!(!continues("Wait...", "Who are you?"));
+        assert_eq!(room(200.0, 60.0, 20.0), 21 * 3);
     }
 
     #[test]

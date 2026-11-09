@@ -64,6 +64,9 @@ pub struct Llm {
     pub low_priority: bool,
     pub extra_args: Vec<String>,
     pub request_timeout_s: u64,
+    /// Unload the translation model after this many minutes without a
+    /// translation (0 = keep it loaded); it loads again by itself.
+    pub unload_after_min: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +252,7 @@ impl Default for Llm {
             low_priority: true,
             extra_args: vec![],
             request_timeout_s: 60,
+            unload_after_min: 10,
         }
     }
 }

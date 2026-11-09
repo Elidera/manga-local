@@ -51,6 +51,16 @@ impl LlmClient {
     /// `schema`: the answer must be JSON of this shape (llama-server turns it
     /// into a grammar the model cannot step out of).
     pub async fn chat_full(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, schema: Option<&Value>, mut on_delta: impl FnMut(&str)) -> Result<String> {
+        // An unloaded model starts loading; wait for it like for the first start.
+        crate::llm::server::touch();
+        if crate::llm::server::asleep() {
+            for _ in 0..240 {
+                if !crate::llm::server::asleep() && self.health().await.unwrap_or(false) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
         let msgs: Vec<Value> = messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect();
         let mut body = json!({
             "messages": msgs,

@@ -159,7 +159,8 @@ fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found:
         .map(|(it, raw)| {
             let size = if usual > 0.0 && heights.len() >= 3 { it.line_h / usual } else { 0.0 };
             if !it.sfx {
-                tr.note_tone(&it.src, manga_core::tone::detect(&raw, size));
+                let room = manga_core::tone::room(it.rect.w, it.rect.h, it.line_h);
+                tr.note_hint(&it.src, manga_core::tone::Hint { tone: manga_core::tone::detect(&raw, size), room });
             }
             it
         })
@@ -418,6 +419,8 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
     }
     let session = SESSIONS.fetch_add(1, Ordering::SeqCst) + 1;
     READING.store(session, Ordering::SeqCst);
+    // The translation model loads (if it was unloaded) while the page is read.
+    crate::llm::server::touch();
     shared.ui(|u| u.flash = Some(("Перевод включён".into(), Instant::now() + Duration::from_millis(1200))));
     PAGE_CONTEXT.lock().unwrap().clear();
     let follow = shared.cfg().interface.auto_hide;
@@ -746,6 +749,8 @@ static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Wait until the model is loaded (the first start downloads it: minutes).
 /// False when the page went away meanwhile or the model failed to start.
 async fn wait_for_model(shared: &Arc<Shared>, alive: &impl Fn() -> bool) -> bool {
+    // Unloaded after a pause: it starts loading now.
+    crate::llm::server::touch();
     let mut told = false;
     loop {
         let status = shared.ui.lock().unwrap().server.clone();

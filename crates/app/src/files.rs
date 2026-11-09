@@ -18,6 +18,11 @@ use std::sync::Arc;
 use manga_core::prompt::TextKind;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// A chapter is being translated now.
+pub fn running() -> bool {
+    RUNNING.load(Ordering::SeqCst)
+}
 static STOP: AtomicBool = AtomicBool::new(false);
 
 /// Ask a running chapter translation to stop after the current page.

@@ -494,6 +494,7 @@ fn header(ui: &mut Ui, shared: &Arc<Shared>, tab: Tab) -> bool {
                 Some(s) if s.is_ready() => status_pill(ui, "● Нейросеть готова", GREEN),
                 Some(crate::state::ServerStatus::Failed(_)) => status_pill(ui, "● Ошибка модели", RED),
                 Some(crate::state::ServerStatus::Starting(_)) => status_pill(ui, "● Загрузка модели…", YELLOW),
+                Some(crate::state::ServerStatus::Stopped) => status_pill(ui, "● Нейросеть отдыхает", GREEN),
                 _ => status_pill(ui, "● Запуск…", YELLOW),
             }
         });
@@ -591,6 +592,7 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
                 ui,
                 match &server {
                     Some(s) if s.is_ready() => Some(true),
+                    Some(crate::state::ServerStatus::Stopped) => Some(true),
                     Some(crate::state::ServerStatus::Failed(_)) => Some(false),
                     _ => None,
                 },
@@ -905,7 +907,7 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
         });
     });
 
-    any |= search_card(ui, "Прочее", "видно на скриншотах скриншот перевод использовать видеокарту тормозит модель процессор", |ui| {
+    any |= search_card(ui, "Прочее", "видно на скриншотах скриншот перевод использовать видеокарту тормозит модель процессор выгружать память простой", |ui| {
         let g = &mut c.general;
         dirty |= setting_row(ui, "Видно на скриншотах", "Включайте, чтобы сделать скриншот с переводом", |ui| toggle(ui, &mut g.visible_in_screenshots).changed());
         let l = &mut c.llm;
@@ -914,6 +916,22 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
             l.gpu_layers = if gpu { 99 } else { 0 };
             dirty = true;
             shared.send(Command::RestartServer);
+        }
+        let mut unload = match l.unload_after_min {
+            0 => "never",
+            m if m <= 10 => "10",
+            _ => "30",
+        }
+        .to_string();
+        if setting_row(ui, "Выгружать переводчик", "Если перевод не нужен столько минут, нейросеть освобождает память и видеокарту; при следующем F8 загрузится сама (5–15 с)", |ui| {
+            segmented(ui, &mut unload, &[("never", "Нет"), ("10", "10 мин"), ("30", "30 мин")])
+        }) {
+            l.unload_after_min = match unload.as_str() {
+                "never" => 0,
+                "10" => 10,
+                _ => 30,
+            };
+            dirty = true;
         }
     });
     any |= search_card(ui, "Расширение для браузера", "расширение для браузера chrome edge яндекс браузер картинки полное качество заранее ошибка связь", |ui| {

@@ -204,7 +204,39 @@ pub fn find_downloaded(models: &Path, hf: &str) -> Option<PathBuf> {
 }
 
 /// Supervisor loop. Runs for the lifetime of the app.
+/// Idle unloading: when the translation model was last asked (hotkeys clock,
+/// ms), whether it is unloaded now, and the wake-up call.
+static LAST_USE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static ASLEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// A translation is about to be asked: count as used; an unloaded model
+/// starts loading now (the caller waits for it as for the first start).
+pub fn touch() {
+    LAST_USE.store(crate::hotkeys::now_ms(), std::sync::atomic::Ordering::Relaxed);
+    if ASLEEP.load(std::sync::atomic::Ordering::Relaxed) {
+        WAKE.notify_one();
+    }
+}
+
+/// The model is unloaded to free memory (it loads again by itself).
+pub fn asleep() -> bool {
+    ASLEEP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Unused long enough to give its memory back? Not while a page or a
+/// chapter is being translated.
+fn idle_for_unload(shared: &Shared) -> bool {
+    let min = shared.cfg().llm.unload_after_min;
+    if min == 0 || crate::interface::reading_on() || crate::files::running() {
+        return false;
+    }
+    let last = LAST_USE.load(std::sync::atomic::Ordering::Relaxed);
+    crate::hotkeys::now_ms().saturating_sub(last) > min as u64 * 60_000
+}
+
 pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: UnboundedReceiver<ServerCmd>) {
+    touch();
     let set = |s: ServerStatus| shared.ui(|u| u.server = Some(s));
     let mut failures = 0u32;
     loop {
@@ -295,16 +327,39 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
             }
         }
 
-        tokio::select! {
-            status = st.child.wait() => {
-                let msg = format!("llama-server неожиданно завершился: {:?}", status.ok());
-                shared.ui(|u| u.notice(msg.clone()));
-                set(ServerStatus::Failed(msg));
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-            cmd = rx.recv() => {
-                let _ = st.child.kill().await;
-                if cmd.is_none() { return; }
+        let mut idle_check = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tokio::select! {
+                status = st.child.wait() => {
+                    let msg = format!("llama-server неожиданно завершился: {:?}", status.ok());
+                    shared.ui(|u| u.notice(msg.clone()));
+                    set(ServerStatus::Failed(msg));
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    break;
+                }
+                cmd = rx.recv() => {
+                    let _ = st.child.kill().await;
+                    if cmd.is_none() { return; }
+                    break;
+                }
+                _ = idle_check.tick() => {
+                    if !idle_for_unload(&shared) {
+                        continue;
+                    }
+                    // Unused for a while: the memory goes back to the computer
+                    // until the next translation asks for the model.
+                    tracing::info!("переводчик не используется {} мин — выгружаю из памяти", shared.cfg().llm.unload_after_min);
+                    ASLEEP.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let _ = st.child.kill().await;
+                    set(ServerStatus::Stopped);
+                    tokio::select! {
+                        _ = WAKE.notified() => {}
+                        cmd = rx.recv() => if cmd.is_none() { return; },
+                    }
+                    ASLEEP.store(false, std::sync::atomic::Ordering::Relaxed);
+                    tracing::info!("переводчик нужен снова — загружаю");
+                    break;
+                }
             }
         }
     }

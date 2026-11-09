@@ -180,8 +180,8 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
         }
         let ctx: Vec<(&str, &str)> = if a.context { prev.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect() } else { Vec::new() };
         // The intonation as the app finds it (no letter sizes here).
-        let tones: Vec<manga_core::tone::Tone> = chunk.iter().map(|l| manga_core::tone::detect(l, 0.0)).collect();
-        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue, &ctx, &tones);
+        let hints: Vec<manga_core::tone::Hint> = chunk.iter().map(|l| manga_core::tone::Hint { tone: manga_core::tone::detect(l, 0.0), room: 0 }).collect();
+        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue, &ctx, &hints);
         let mut page: Vec<(String, String)> = Vec::new();
         let need: usize = chunk.iter().map(|s| s.chars().count() * 3 + 24).sum();
         let json = prompt::batch_is_json(style);

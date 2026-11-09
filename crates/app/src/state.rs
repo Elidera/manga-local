@@ -19,7 +19,7 @@ pub enum ServerStatus {
 impl ServerStatus {
     pub fn label(&self) -> String {
         match self {
-            ServerStatus::Stopped => "остановлен".into(),
+            ServerStatus::Stopped => "выгружен из памяти — загрузится сам при переводе".into(),
             ServerStatus::Starting(s) => format!("запуск: {s}"),
             ServerStatus::Ready { model } => format!("готов · {model}"),
             ServerStatus::Failed(e) => format!("ошибка: {e}"),
