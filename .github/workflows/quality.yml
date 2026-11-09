@@ -45,7 +45,9 @@ jobs:
 
       - name: Download llama.cpp (Linux CPU)
         run: |
-          tag=$(gh api "repos/ggml-org/llama.cpp/releases?per_page=30" --jq '[.[] | select(.tag_name | test("^b[0-9]+$"))][0].tag_name')
+          # The newest regular build that already has its Linux files (a fresh
+          # release is published first and gets its files minutes later).
+          tag=$(gh api "repos/ggml-org/llama.cpp/releases?per_page=30" --jq '[.[] | select(.tag_name | test("^b[0-9]+$")) | select(any(.assets[]; .name | test("bin-ubuntu-x64[.]")))][0].tag_name')
           echo "llama.cpp $tag"
           mkdir -p dl llama
           gh release download "$tag" --repo ggml-org/llama.cpp --pattern "*bin-ubuntu-x64.*" --dir dl
