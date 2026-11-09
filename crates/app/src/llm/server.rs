@@ -50,6 +50,21 @@ pub struct Started {
     pub log: Arc<Mutex<VecDeque<String>>>,
 }
 
+/// Generation speed of the last answer, tokens per second × 10 (0 = none yet),
+/// read from llama-server's own timing lines.
+pub static GEN_SPEED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// «eval time = 2477.19 ms / 13 tokens ( 206.43 ms per token, 4.84 tokens per second)»
+/// → 4.84 (the answer's speed; the prompt's line starts with «prompt eval time»).
+pub fn parse_gen_speed(line: &str) -> Option<f32> {
+    if !line.contains(" eval time") || line.contains("prompt eval time") {
+        return None;
+    }
+    let tail = line.rsplit_once("tokens per second")?.0;
+    let num = tail.rsplit(|c: char| c == ',' || c == '(').next()?.trim();
+    num.parse().ok()
+}
+
 /// Spawn llama-server for `preset` (does not wait for readiness).
 pub fn spawn(paths: &Paths, cfg: &Config, preset: &ModelPreset) -> Result<Started> {
     let exe = paths.resolve(&cfg.llm.server_exe);
@@ -101,6 +116,9 @@ pub fn spawn(paths: &Paths, cfg: &Config, preset: &ModelPreset) -> Result<Starte
             let mut lines = BufReader::new(stream).lines();
             while let Ok(Some(l)) = lines.next_line().await {
                 tracing::debug!(target: "llama", "{l}");
+                if let Some(v) = parse_gen_speed(&l) {
+                    GEN_SPEED.store((v * 10.0) as u32, std::sync::atomic::Ordering::Relaxed);
+                }
                 let mut g = log.lock().unwrap();
                 g.push_back(l);
                 while g.len() > 60 {
@@ -238,6 +256,8 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
         failures = 0;
         tracing::info!("llama-server готов: {}", preset.name);
         set(ServerStatus::Ready { model: preset.name.clone() });
+        GEN_SPEED.store(0, std::sync::atomic::Ordering::Relaxed);
+        tokio::spawn(check_speed(shared.clone(), shared.paths.resolve(&shared.cfg().llm.server_exe)));
 
         // Pin the downloaded file so the next start is offline.
         if downloading && !preset.hf.is_empty() {
@@ -266,4 +286,48 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
             }
         }
     }
+}
+
+/// After the first answers: is the model really on the video card? Gemma 4 E4B
+/// and Hy-MT2 give 30–100 tokens per second on a video card and ~5 on a
+/// processor. A slow model with a video card present gets one clear notice.
+async fn check_speed(shared: Arc<Shared>, exe: PathBuf) {
+    use std::sync::atomic::Ordering;
+    let vulkan = exe.parent().is_some_and(|d| d.join("ggml-vulkan.dll").exists());
+    tracing::info!("движок нейросети: {}", if vulkan { "с поддержкой видеокарты (Vulkan)" } else { "только процессор" });
+    // Wait for a few answers (the first ones also warm the cache).
+    let mut seen = 0;
+    let mut last = 0;
+    for _ in 0..600 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let v = GEN_SPEED.load(Ordering::Relaxed);
+        if v != 0 && v != last {
+            seen += 1;
+            last = v;
+        }
+        if seen >= 2 {
+            break;
+        }
+    }
+    if seen == 0 {
+        return;
+    }
+    let speed = last as f32 / 10.0;
+    let vram = crate::win::vram_gb();
+    tracing::info!("скорость нейросети: {speed:.1} токенов/с, видеопамять {vram:.1} ГБ");
+    if speed >= 12.0 || vram < 3.5 {
+        return;
+    }
+    let msg = if !vulkan {
+        format!(
+            "Нейросеть работает на процессоре и поэтому медленно ({speed:.0} слов/с). Установлена версия «только процессор»: \
+             переустановите Manga Local и выберите «Видеокарта (Vulkan)» — перевод станет в 5–10 раз быстрее."
+        )
+    } else {
+        format!(
+            "Нейросеть работает медленно ({speed:.0} слов/с) — похоже, видеокарта не используется. \
+             Обновите драйвер видеокарты (с сайта NVIDIA / AMD / Intel) и перезапустите Manga Local."
+        )
+    };
+    shared.ui(|u| u.notice(msg));
 }

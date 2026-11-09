@@ -109,13 +109,13 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
         let Prepared { bytes, frame, items, lines } = prepared;
         let Some(mut frame) = frame else {
             // Not a picture after all: copied as it is.
-            out.add(page.rsplit(['/', '\\']).next().unwrap_or(page), &bytes)?;
+            out.add(&chapter::flat_name(page), &bytes)?;
             continue;
         };
         tracing::info!(target: "files", "{page}: {lines} строк → {} пузырей", items.len());
         if items.is_empty() {
             // No text: the page is kept unchanged (no re-encoding).
-            out.add(page.rsplit(['/', '\\']).next().unwrap_or(page), &bytes)?;
+            out.add(&chapter::flat_name(page), &bytes)?;
             done += 1;
             continue;
         }
@@ -150,7 +150,13 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
                 busy: it.busy,
                 translation: result.get(&it.src).cloned().unwrap_or_default(),
             })
+            // No translation (or the original back after a failure): the bubble is left as drawn.
             .filter(|b| !b.translation.is_empty())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .zip(items.iter())
+            .filter(|(b, it)| b.translation != it.src)
+            .map(|(b, _)| b)
             .collect();
         manga_pages::render(&mut frame, &bubbles, &letterer, cfg.interface.font_scale);
         let encoded = chapter::encode(&frame, jpeg)?;

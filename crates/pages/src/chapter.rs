@@ -158,9 +158,17 @@ pub fn encode(f: &Frame, as_jpeg: bool) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// A page's name with its folders folded in: «том1/001.jpg» → «том1_001.jpg».
+pub fn flat_name(page: &str) -> String {
+    page.trim_start_matches(['/', '\\']).replace(['/', '\\'], "_")
+}
+
 /// The output name of a page: JPEG pages stay .jpg, the rest become .png.
+/// Folders inside an archive become part of the name («том1/001.jpg» →
+/// «том1_001.jpg»), so pages of different folders never overwrite each other.
 pub fn output_name(page: &str) -> (String, bool) {
-    let base = page.rsplit(['/', '\\']).next().unwrap_or(page);
+    let flat = flat_name(page);
+    let base = flat.as_str();
     let lower = base.to_lowercase();
     let jpeg = lower.ends_with(".jpg") || lower.ends_with(".jpeg");
     let stem = base.rsplit_once('.').map_or(base, |(s, _)| s);
@@ -217,7 +225,8 @@ mod tests {
 
     #[test]
     fn output_names() {
-        assert_eq!(output_name("ch/001.JPG"), ("001.jpg".into(), true));
+        assert_eq!(output_name("ch/001.JPG"), ("ch_001.jpg".into(), true));
+        assert_ne!(output_name("vol1/001.jpg").0, output_name("vol2/001.jpg").0);
         assert_eq!(output_name("002.webp"), ("002.png".into(), false));
     }
 

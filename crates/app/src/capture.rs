@@ -30,7 +30,11 @@ pub fn game_area(cfg: &crate::config::Config) -> PxRect {
     if !cfg.watches_window() || !cfg.window_in_front() {
         return full;
     }
-    crate::win::foreground_client_rect().map_or(full, |(x, y, w, h)| PxRect { x, y, w, h })
+    // A Chromium browser: only the page (not the tabs and the address bar,
+    // whose titles would be "translated" too).
+    crate::win::browser_page_rect()
+        .or_else(crate::win::foreground_client_rect)
+        .map_or(full, |(x, y, w, h)| PxRect { x, y, w, h })
 }
 
 /// Capture and blank out everything our overlay is drawing right now (dialogue

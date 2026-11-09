@@ -38,7 +38,13 @@ impl LlmClient {
     }
 
     /// Stream a chat completion. `on_delta` receives the text accumulated so far.
-    pub async fn chat(&self, messages: &[Message], p: &ModelPreset, mut on_delta: impl FnMut(&str)) -> Result<String> {
+    pub async fn chat(&self, messages: &[Message], p: &ModelPreset, on_delta: impl FnMut(&str)) -> Result<String> {
+        self.chat_within(messages, p, None, on_delta).await
+    }
+
+    /// `chat` with its own time limit (a long page batch on a processor needs
+    /// more than the usual one).
+    pub async fn chat_within(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, mut on_delta: impl FnMut(&str)) -> Result<String> {
         let msgs: Vec<Value> = messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect();
         let mut body = json!({
             "messages": msgs,
@@ -54,14 +60,21 @@ impl LlmClient {
             body["chat_template_kwargs"] = json!({"enable_thinking": false});
         }
         let url = format!("{}/v1/chat/completions", self.base);
-        let resp = match self.http.post(&url).json(&body).send().await {
+        let post = || {
+            let r = self.http.post(&url).json(&body);
+            match timeout {
+                Some(t) => r.timeout(t),
+                None => r,
+            }
+        };
+        let resp = match post().send().await {
             Ok(r) => r,
             // llama-server may close a kept-alive connection right as we reuse it
             // ("error sending request" in logs): one quick retry on a fresh one.
             Err(e) if e.is_request() || e.is_connect() => {
                 tracing::debug!("llama-server: повтор запроса после «{e}»");
                 tokio::time::sleep(Duration::from_millis(60)).await;
-                self.http.post(&url).json(&body).send().await?
+                post().send().await?
             }
             Err(e) => return Err(e.into()),
         };

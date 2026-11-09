@@ -14,7 +14,7 @@ use windows::Win32::System::JobObjects::{
 };
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, FindWindowW, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible, GetSystemMetrics, GetWindowLongPtrW, GetWindowTextW,
+    EnumChildWindows, EnumWindows, FindWindowW, GetClassNameW, GetClientRect, GetForegroundWindow, GetWindowRect, IsIconic, IsWindowVisible, GetSystemMetrics, GetWindowLongPtrW, GetWindowTextW,
     SetForegroundWindow, SetWindowDisplayAffinity, ShowWindow, SW_RESTORE,
     SetWindowLongPtrW, GWL_EXSTYLE, SM_CXSCREEN, SM_CYSCREEN, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_EX_TOPMOST,
@@ -91,6 +91,40 @@ pub fn foreground_client_rect() -> Option<(i32, i32, i32, i32)> {
         let (x0, y0) = (pt.x.max(0), pt.y.max(0));
         let (x1, y1) = ((pt.x + rc.right).min(sw), (pt.y + rc.bottom).min(sh));
         (x1 - x0 >= 320 && y1 - y0 >= 240).then_some((x0, y0, x1 - x0, y1 - y0))
+    }
+}
+
+/// The web page itself inside a Chromium browser (Chrome, Edge, Brave, Opera,
+/// Yandex): its child window «Chrome_RenderWidgetHostHWND», without the tabs,
+/// the address bar and the bookmarks. None for other programs.
+pub fn browser_page_rect() -> Option<(i32, i32, i32, i32)> {
+    unsafe extern "system" fn each(h: HWND, lp: LPARAM) -> BOOL {
+        let best = &mut *(lp.0 as *mut Option<(i32, i32, i32, i32)>);
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(h, &mut buf) as usize;
+        if String::from_utf16_lossy(&buf[..n]) == "Chrome_RenderWidgetHostHWND" && IsWindowVisible(h).as_bool() {
+            let mut r = RECT::default();
+            if GetWindowRect(h, &mut r).is_ok() {
+                let (w, hh) = (r.right - r.left, r.bottom - r.top);
+                if best.is_none_or(|b| w * hh > b.2 * b.3) {
+                    *best = Some((r.left, r.top, w, hh));
+                }
+            }
+        }
+        BOOL(1)
+    }
+    unsafe {
+        let top = GetForegroundWindow();
+        if top.0.is_null() {
+            return None;
+        }
+        let mut best: Option<(i32, i32, i32, i32)> = None;
+        let _ = EnumChildWindows(top, Some(each), LPARAM(&mut best as *mut _ as isize));
+        let (sw, sh) = screen_size();
+        let (x, y, w, h) = best?;
+        let (x0, y0) = (x.max(0), y.max(0));
+        let (x1, y1) = ((x + w).min(sw), (y + h).min(sh));
+        (x1 - x0 >= 320 && y1 - y0 >= 200).then_some((x0, y0, x1 - x0, y1 - y0))
     }
 }
 

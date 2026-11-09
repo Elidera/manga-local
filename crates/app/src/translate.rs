@@ -294,8 +294,11 @@ impl Translator {
     /// similar-line memory) so the next request asks the model again, and note
     /// it in `bad.tsv` (to look through or send to the developer).
     pub fn forget(&self, model_id: &str, src: &str, bad: &str) {
-        let line = self.cache.lock().unwrap().remove(&[model_id, kind_tag(TextKind::Dialogue), src]);
-        append(&self.paths.cache(), &line);
+        // A bubble or a sound effect: whichever of them was cached.
+        for kind in [TextKind::Dialogue, TextKind::Interface] {
+            let line = self.cache.lock().unwrap().remove(&[model_id, kind_tag(kind), src]);
+            append(&self.paths.cache(), &line);
+        }
         self.fuzzy.lock().unwrap().forget(src);
         let (date, time) = crate::win::local_date_time();
         append(&self.paths.data.join("bad.tsv"), &manga_core::tsv::line(&[src, bad, &format!("{date} {time}")]));
@@ -567,8 +570,10 @@ impl Translator {
         // Russian takes ~2–3 tokens per CJK character; bubbles are longer than labels.
         let need: usize = items.iter().map(|s| s.chars().count() * 3 + 24).sum();
         p.max_tokens = (need as u32 + 64).clamp(128, 3072);
+        // ~3 s per bubble on a processor: a full page may need minutes.
+        let limit = std::time::Duration::from_secs((30 + items.len() as u64 * 8).max(60));
         let _slot = self.gate.lock().await;
-        let raw = self.client.chat(&messages, &p, |_| {}).await?;
+        let raw = self.client.chat_within(&messages, &p, Some(limit), |_| {}).await?;
         drop(_slot);
         let parts = prompt::parse_batch_indexed(&raw, items.len());
         if parts.iter().any(Option::is_none) {

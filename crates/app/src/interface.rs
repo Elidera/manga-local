@@ -422,12 +422,16 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
     let alive = || shared.interface_gen.load(Ordering::SeqCst) == gen;
     let lang = shared.cfg().source_lang();
     let set_result = |src: &str, dst: String| {
-        let names = tr.observe_names(lang, src, &dst);
+        // The original back means the translation failed: the bubble stays as it is.
+        let failed = dst == src;
+        let names = if failed { Vec::new() } else { tr.observe_names(lang, src, &dst) };
         shared.ui(|u| {
             u.offer_names(names);
             if let Some(v) = u.interface.as_mut().filter(|v| v.generation == gen) {
-                for it in v.items.iter_mut().filter(|it| it.src == src) {
-                    it.dst = Some(dst.clone());
+                if !failed {
+                    for it in v.items.iter_mut().filter(|it| it.src == src) {
+                        it.dst = Some(dst.clone());
+                    }
                 }
                 v.pending = v.pending.saturating_sub(1);
             }
@@ -462,6 +466,31 @@ fn remember_page(shared: &Arc<Shared>, gen: u64) {
     *PAGE_CONTEXT.lock().unwrap() = pairs.into_iter().skip(skip).collect();
 }
 
+/// Translation requests of pages, one at a time (see `translate_texts`).
+static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Wait until the model is loaded (the first start downloads it: minutes).
+/// False when the page went away meanwhile or the model failed to start.
+async fn wait_for_model(shared: &Arc<Shared>, alive: &impl Fn() -> bool) -> bool {
+    let mut told = false;
+    loop {
+        let status = shared.ui.lock().unwrap().server.clone();
+        match status {
+            Some(s) if s.is_ready() => return true,
+            Some(crate::state::ServerStatus::Failed(_)) => return false,
+            _ => {}
+        }
+        if !alive() {
+            return false;
+        }
+        if !told {
+            told = true;
+            shared.ui(|u| u.notice("Нейросеть ещё загружается — перевод появится сам, как только она будет готова"));
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 /// Translate the bubbles of one page: the whole page in one call when it fits
 /// (up to 24 bubbles / ~900 chars) — the model then sees the conversation and
 /// keeps names the same; what a batch could not give back, one by one.
@@ -478,6 +507,9 @@ pub async fn translate_texts(
     alive: impl Fn() -> bool,
     mut done: impl FnMut(&str, String),
 ) {
+    if unique.is_empty() || !wait_for_model(shared, &alive).await {
+        return;
+    }
     let mut chunks: Vec<Vec<String>> = Vec::new();
     for src in unique {
         let fits = chunks.last().is_some_and(|c: &Vec<String>| c.len() < 24 && c.iter().map(|s| s.chars().count()).sum::<usize>() + src.chars().count() < 900);
@@ -488,6 +520,9 @@ pub async fn translate_texts(
         }
     }
     for chunk in chunks {
+        // One page's request at a time; a page that went away while waiting
+        // for its turn is skipped (no minutes-long queue of old pages).
+        let _turn = TURN.lock().await;
         if !alive() {
             return; // hidden or replaced
         }
