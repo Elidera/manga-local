@@ -317,6 +317,17 @@ async fn check_speed(shared: Arc<Shared>, exe: PathBuf) {
     use std::sync::atomic::Ordering;
     let vulkan = exe.parent().is_some_and(|d| d.join("ggml-vulkan.dll").exists());
     tracing::info!("движок нейросети: {}", if vulkan { "с поддержкой видеокарты (Vulkan)" } else { "только процессор" });
+    // Which devices the engine itself sees (a slow translation on a strong
+    // card is explained here: no Vulkan device, or the built-in graphics first).
+    let mut probe = Command::new(&exe);
+    probe.arg("--list-devices").current_dir(exe.parent().unwrap_or(Path::new("."))).creation_flags(CREATE_NO_WINDOW);
+    probe.stdin(Stdio::null()).kill_on_drop(true);
+    if let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(20), probe.output()).await {
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        for l in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(12) {
+            tracing::info!("устройства нейросети: {l}");
+        }
+    }
     // Wait for a few answers (the first ones also warm the cache).
     let mut seen = 0;
     let mut last = 0;
