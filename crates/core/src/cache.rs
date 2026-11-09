@@ -45,6 +45,15 @@ impl Store {
         Self::default()
     }
 
+    /// Drop the entries of the old cache format (without a reading scope):
+    /// they are never looked up any more. Returns how many went.
+    pub fn drop_unscoped(&mut self) -> usize {
+        let before = self.map.len();
+        let mark = format!("v2{}", '\u{1f}');
+        self.map.retain(|k, _| k.starts_with(&mark));
+        before - self.map.len()
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -140,6 +149,17 @@ mod tests {
         reloaded.load_tsv(&s.dump());
         assert_eq!(reloaded.get(&first.key("gemma", "d", "Wait")), None);
         assert_eq!(reloaded.get(&second.key("gemma", "d", "Wait")), Some("Стой"));
+    }
+
+    #[test]
+    fn old_entries_are_dropped() {
+        let sc = Scope::new("browser", "", Lang::Ko);
+        let mut s = Store::new();
+        s.load_tsv("gemma\td\tWait\tПодожди\n");
+        s.insert(&sc.key("gemma", "d", "Wait"), "Стой");
+        assert_eq!(s.drop_unscoped(), 1);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.get(&sc.key("gemma", "d", "Wait")), Some("Стой"));
     }
 
     #[test]

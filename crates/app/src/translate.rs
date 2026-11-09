@@ -127,8 +127,10 @@ impl Translator {
         let mut cache = Store::new();
         if let Ok(s) = std::fs::read_to_string(paths.cache()) {
             let n = cache.load_tsv(&s);
-            // Compact the append-only log when it has grown with duplicates.
-            if n > cache.len() * 2 + 1000 {
+            // Entries of the old format (before titles were kept apart) are never used.
+            let old = cache.drop_unscoped();
+            // Compact the append-only log when it has grown with duplicates or old entries.
+            if old > 0 || n > cache.len() * 2 + 1000 {
                 let _ = std::fs::write(paths.cache(), cache.dump());
             }
         }

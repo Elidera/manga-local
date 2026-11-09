@@ -286,7 +286,9 @@ pub fn is_short_reply(s: &str, lang: Lang) -> bool {
     let word: String = s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
     let replies: &[&str] = match lang {
         Lang::Ja => &["あ", "あっ", "ああ", "え", "えっ", "ええ", "お", "おお", "おい", "うん", "いや", "いいえ", "はい", "ん", "ふん", "へえ", "うわ", "はあ"],
-        Lang::Ko => &["응", "네", "예", "아", "어", "오", "뭐", "왜", "야", "헉", "앗", "아니", "음", "흠", "쳇"],
+        // Not «아», «어», «오», «야», «네»: alone outside a bubble they are as
+        // often bits of the drawing or of the site as real replies.
+        Lang::Ko => &["응", "헉", "앗", "아니", "흠", "쳇"],
         Lang::Zh => &["啊", "嗯", "哦", "好", "不", "是", "喂", "唉", "哎", "咦", "哼", "呀", "哈", "对", "對", "不是", "不行"],
         Lang::En => &["no", "oh", "ah", "eh", "ow", "hm", "hmm", "huh", "uh"],
     };
