@@ -349,8 +349,9 @@ pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &s
             let mut sys = instruct_system(&dummy);
             let what = if bubbles { "реплик из пузырей одной страницы, по порядку чтения" } else { "отдельных надписей" };
             sys.push_str(&format!(
-                "\n9. На вход подаётся {n} {what}, с номерами [1], [2]…, разделённых «{BATCH_SEP}». \
-                 Переведи каждую отдельно (но с учётом общего разговора) и выведи переводы в том же порядке, с теми же номерами, разделяя их тем же «{BATCH_SEP}»."
+                "\n9. На вход подаётся JSON-объект: {n} {what}; ключ — номер, значение — текст. \
+                 Переведи каждую отдельно (но с учётом общего разговора) и ответь JSON-объектом с теми же ключами, \
+                 где значение — перевод на русский. Только JSON, без пояснений."
             ));
             let mut u = String::new();
             if !terms.is_empty() {
@@ -368,10 +369,61 @@ pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &s
                 u.push('\n');
             }
             u.push_str("Переведи на русский:\n");
-            u.push_str(&joined);
+            u.push_str(&batch_json(items));
             vec![Message { role: "system", content: sys }, Message { role: "user", content: u }]
         }
     }
+}
+
+/// The key of item `i` (0-based) of a JSON batch: «01», «02»… — zero-padded,
+/// so the keys sort in reading order wherever they are sorted.
+fn batch_key(i: usize) -> String {
+    format!("{:02}", i + 1)
+}
+
+/// The page for an instruct model: a JSON object {"01": "…", "02": "…"}.
+pub fn batch_json(items: &[&str]) -> String {
+    let body: Vec<String> = items.iter().enumerate().map(|(i, s)| format!("  \"{}\": {}", batch_key(i), serde_json::Value::String(s.to_string()))).collect();
+    format!("{{\n{}\n}}", body.join(",\n"))
+}
+
+/// Does this prompt style send the page as JSON (and expect JSON back)?
+pub fn batch_is_json(style: PromptStyle) -> bool {
+    style == PromptStyle::Instruct
+}
+
+/// JSON Schema of the answer to a batch of `n`: exactly the keys «01»…, each a
+/// string. llama-server turns it into a grammar, so the model cannot answer
+/// anything else (no lost, merged or extra items).
+pub fn batch_schema(n: usize) -> serde_json::Value {
+    let mut props = serde_json::Map::new();
+    let mut required = Vec::new();
+    for i in 0..n {
+        props.insert(batch_key(i), serde_json::json!({ "type": "string", "minLength": 1 }));
+        required.push(serde_json::Value::String(batch_key(i)));
+    }
+    serde_json::json!({ "type": "object", "properties": props, "required": required, "additionalProperties": false })
+}
+
+/// Split a batch answer: JSON from an instruct model, numbered parts otherwise.
+pub fn parse_batch_any(raw: &str, n: usize) -> Vec<Option<String>> {
+    let s = strip_think(raw);
+    if let (Some(a), Some(b)) = (s.find('{'), s.rfind('}')) {
+        if a < b {
+            if let Ok(serde_json::Value::Object(m)) = serde_json::from_str::<serde_json::Value>(&s[a..=b]) {
+                let out: Vec<Option<String>> = (0..n)
+                    .map(|i| {
+                        let v = m.get(&batch_key(i)).or_else(|| m.get(&(i + 1).to_string()));
+                        v.and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
+                    })
+                    .collect();
+                if out.iter().any(Option::is_some) {
+                    return out;
+                }
+            }
+        }
+    }
+    parse_batch_indexed(raw, n)
 }
 
 /// Split a numbered batch answer. Each slot is `Some` if that item was found:
@@ -682,7 +734,7 @@ mod tests {
         assert!(p.find("Сонбэ").unwrap() < p.find("[1]미안해.").unwrap());
         assert!(p.ends_with("[2]가자."));
         let i = build_batch(PromptStyle::Instruct, &["미안해."], &[], "", TextKind::Dialogue, &ctx);
-        assert!(i[1].content.contains("Предыдущие реплики") && i[1].content.ends_with("[1]미안해."));
+        assert!(i[1].content.contains("Предыдущие реплики") && i[1].content.ends_with("\"01\": \"미안해.\"\n}"));
         let none = build_batch(PromptStyle::HyMt, &["미안해."], &[], "", TextKind::Dialogue, &[]);
         assert!(!none[0].content.contains("Background"));
     }
@@ -750,6 +802,17 @@ mod tests {
         assert!(m[0].content.starts_with("参考下面的翻译"));
         let m = build_batch(PromptStyle::Instruct, &["背包", "任务"], &[], "G", TextKind::Interface, &[]);
         assert_eq!(m[0].role, "system");
+        assert!(m[1].content.contains("\"01\": \"背包\""), "{}", m[1].content);
+        // JSON answers: in any key order, with talk around, keys with or without the zero.
+        assert_eq!(parse_batch_any("Вот перевод:\n{\"02\": \"Задания\", \"01\": \"Инвентарь\"}", 2), vec![Some("Инвентарь".to_string()), Some("Задания".to_string())]);
+        assert_eq!(parse_batch_any("{\"1\": \"Инвентарь\"}", 2), vec![Some("Инвентарь".to_string()), None]);
+        assert_eq!(parse_batch_any("[1]А|||[2]Б", 2), vec![Some("А".to_string()), Some("Б".to_string())]);
+        let sc = batch_schema(3);
+        assert_eq!(sc["required"].as_array().unwrap().len(), 3);
+        assert_eq!(sc["required"][2], "03");
+        // Quotes and line breaks inside a bubble stay valid JSON.
+        let j = batch_json(&["He said \"no\"\nthen left"]);
+        assert!(serde_json::from_str::<serde_json::Value>(&j).is_ok());
         assert_eq!(parse_batch("Инвентарь ||| Задания|||Настройки", 3).unwrap(), vec!["Инвентарь", "Задания", "Настройки"]);
         assert_eq!(parse_batch("Инвентарь｜｜｜Задания", 2).unwrap().len(), 2);
         assert!(parse_batch("Инвентарь|||Задания", 3).is_none());

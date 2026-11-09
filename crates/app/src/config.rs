@@ -242,7 +242,7 @@ impl Default for Llm {
             server_exe: "llama\\llama-server.exe".into(),
             port: 8848,
             external_url: "http://127.0.0.1:8080".into(),
-            active_model: "hymt2-1.8b".into(),
+            active_model: "gemma4-e2b".into(),
             gpu_layers: 99,
             threads: 0,
             ctx_size: 4096,
@@ -254,12 +254,14 @@ impl Default for Llm {
 }
 
 /// The model to suggest for a video card with `vram_gb` of memory: Gemma 4
-/// E4B (≈5 GB plus room for the page) from ~7 GB, Hy-MT2 1.8B below.
+/// E4B (≈5 GB plus room for the page) from ~7 GB, Gemma 4 E2B below and on
+/// the processor (in the checks it translates better than Hy-MT2 1.8B and
+/// even faster).
 pub fn recommended_model(vram_gb: f32) -> &'static str {
     if vram_gb >= 6.5 {
         "gemma4-e4b"
     } else {
-        "hymt2-1.8b"
+        "gemma4-e2b"
     }
 }
 
@@ -273,7 +275,7 @@ pub fn default_models() -> Vec<ModelPreset> {
     vec![
         ModelPreset {
             id: "hymt2-1.8b".into(),
-            name: "Hy-MT2 1.8B Q4_K_M — быстрый, для слабых ПК (по умолчанию)".into(),
+            name: "Hy-MT2 1.8B Q4_K_M — самый лёгкий (1,1 ГБ), перевод проще".into(),
             prompt: "hymt".into(),
             hf: "tencent/Hy-MT2-1.8B-GGUF:Q4_K_M".into(),
             temperature: 0.7,
@@ -293,6 +295,19 @@ pub fn default_models() -> Vec<ModelPreset> {
             top_k: 20,
             repeat_penalty: 1.05,
             size_gb: 4.62,
+            ..Default::default()
+        },
+        ModelPreset {
+            id: "gemma4-e2b".into(),
+            name: "Gemma 4 E2B Q4_K_M — быстрый и хороший, для обычных ПК и ноутбуков".into(),
+            prompt: "instruct".into(),
+            hf: "unsloth/gemma-4-E2B-it-GGUF:Q4_K_M".into(),
+            temperature: 0.3,
+            top_p: 0.8,
+            top_k: 20,
+            repeat_penalty: 1.05,
+            no_think: true,
+            size_gb: 3.1,
             ..Default::default()
         },
         ModelPreset {
@@ -440,6 +455,12 @@ impl Config {
                 "hymt2-7b"
             } else {
                 "hymt2-1.8b"
+            }
+        } else if name.contains("gemma") {
+            if name.contains("e2b") {
+                "gemma4-e2b"
+            } else {
+                "gemma4-e4b"
             }
         } else if name.contains("qwen") {
             if name.contains("4b") {

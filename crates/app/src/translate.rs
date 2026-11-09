@@ -578,9 +578,15 @@ impl Translator {
         // ~3 s per bubble on a processor: a full page may need minutes.
         let limit = std::time::Duration::from_secs((30 + items.len() as u64 * 8).max(60));
         let _slot = self.gate.lock().await;
-        let raw = self.client.chat_within(&messages, &p, Some(limit), |_| {}).await?;
+        // Instruct models: the page as JSON, the answer held to the same keys.
+        let schema = prompt::batch_is_json(PromptStyle::parse(&preset.prompt)).then(|| prompt::batch_schema(items.len()));
+        if schema.is_some() {
+            // Quotes, braces and keys cost tokens too.
+            p.max_tokens = (p.max_tokens + items.len() as u32 * 12).min(3600);
+        }
+        let raw = self.client.chat_full(&messages, &p, Some(limit), schema.as_ref(), |_| {}).await?;
         drop(_slot);
-        let parts = prompt::parse_batch_indexed(&raw, items.len());
+        let parts = prompt::parse_batch_any(&raw, items.len());
         if parts.iter().any(Option::is_none) {
             tracing::info!(target: "translate", "пакет разобран не полностью, ответ модели: {}", raw.chars().take(600).collect::<String>());
         }

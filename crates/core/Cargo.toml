@@ -7,3 +7,4 @@ license.workspace = true
 
 # Deliberately dependency-free: the core builds and tests on any OS.
 [dependencies]
+serde_json = "1"

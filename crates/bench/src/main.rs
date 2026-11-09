@@ -127,6 +127,11 @@ fn chat(agent: &ureq::Agent, a: &Args, messages: &[prompt::Message]) -> Result<S
 }
 
 fn chat_n(agent: &ureq::Agent, a: &Args, messages: &[prompt::Message], max_tokens: u32) -> Result<String, String> {
+    chat_schema(agent, a, messages, max_tokens, None)
+}
+
+/// As the app: `schema` holds a page batch of an instruct model to its JSON keys.
+fn chat_schema(agent: &ureq::Agent, a: &Args, messages: &[prompt::Message], max_tokens: u32, schema: Option<Value>) -> Result<String, String> {
     let msgs: Vec<Value> = messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect();
     let mut body = json!({
         "messages": msgs, "stream": false, "temperature": a.temp, "top_p": a.top_p,
@@ -134,6 +139,9 @@ fn chat_n(agent: &ureq::Agent, a: &Args, messages: &[prompt::Message], max_token
     });
     if a.no_think {
         body["chat_template_kwargs"] = json!({"enable_thinking": false});
+    }
+    if let Some(schema) = schema {
+        body["response_format"] = json!({"type": "json_schema", "json_schema": {"name": "page", "schema": schema}});
     }
     let resp: Value = agent
         .post(&format!("{}/v1/chat/completions", a.server.trim_end_matches('/')))
@@ -174,9 +182,11 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
         let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue, &ctx);
         let mut page: Vec<(String, String)> = Vec::new();
         let need: usize = chunk.iter().map(|s| s.chars().count() * 3 + 24).sum();
-        let parts = chat_n(agent, a, &msgs, (need as u32 + 64).clamp(128, 3072))
+        let json = prompt::batch_is_json(style);
+        let tokens = (need as u32 + 64).clamp(128, 3072) + if json { chunk.len() as u32 * 12 } else { 0 };
+        let parts = chat_schema(agent, a, &msgs, tokens, json.then(|| prompt::batch_schema(chunk.len())))
             .map(|raw| {
-                let p = prompt::parse_batch_indexed(&raw, chunk.len());
+                let p = prompt::parse_batch_any(&raw, chunk.len());
                 if p.iter().any(Option::is_none) {
                     eprintln!("batch partially parsed, raw: {raw}");
                 }

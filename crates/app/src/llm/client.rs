@@ -44,7 +44,13 @@ impl LlmClient {
 
     /// `chat` with its own time limit (a long page batch on a processor needs
     /// more than the usual one).
-    pub async fn chat_within(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, mut on_delta: impl FnMut(&str)) -> Result<String> {
+    pub async fn chat_within(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, on_delta: impl FnMut(&str)) -> Result<String> {
+        self.chat_full(messages, p, timeout, None, on_delta).await
+    }
+
+    /// `schema`: the answer must be JSON of this shape (llama-server turns it
+    /// into a grammar the model cannot step out of).
+    pub async fn chat_full(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, schema: Option<&Value>, mut on_delta: impl FnMut(&str)) -> Result<String> {
         let msgs: Vec<Value> = messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect();
         let mut body = json!({
             "messages": msgs,
@@ -58,6 +64,9 @@ impl LlmClient {
         });
         if p.no_think {
             body["chat_template_kwargs"] = json!({"enable_thinking": false});
+        }
+        if let Some(schema) = schema {
+            body["response_format"] = json!({"type": "json_schema", "json_schema": {"name": "page", "schema": schema}});
         }
         let url = format!("{}/v1/chat/completions", self.base);
         let post = || {
