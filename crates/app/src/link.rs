@@ -342,7 +342,7 @@ fn same_picture(pic: &Frame, screen: &Frame, vis0: f32, vis1: f32, bx: f32, by: 
         }
     }
     // Too few points on screen, or a flat picture (white page): nothing to tell by.
-    n >= 40 && (diff / n as f32 < 28.0 || spread.1 - spread.0 < 30.0)
+    n >= 40 && (diff / (n as f32) < 28.0 || spread.1 - spread.0 < 30.0)
 }
 
 /// Read a picture ahead and translate its text into the cache, piece by
