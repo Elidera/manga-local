@@ -69,6 +69,102 @@ pub fn continues(prev: &str, next: &str) -> bool {
     starts_dots && ends_open || ends_open && n.chars().next().is_some_and(|c| c.is_lowercase())
 }
 
+/// Bubbles that go on with one phrase, as runs of indices: `[[0], [1, 2], [3]]`.
+pub fn phrase_groups(items: &[&str]) -> Vec<Vec<usize>> {
+    let mut g: Vec<Vec<usize>> = Vec::new();
+    for i in 0..items.len() {
+        match g.last_mut() {
+            Some(last) if i > 0 && last.len() < 4 && continues(items[i - 1], items[i]) => last.push(i),
+            _ => g.push(vec![i]),
+        }
+    }
+    g
+}
+
+/// One phrase as the model sees it: the bubbles joined, the dots between them dropped.
+pub fn join_phrase(parts: &[&str]) -> String {
+    let mut out = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        let mut p = p.trim();
+        if i > 0 {
+            p = p.trim_start_matches(['…', '.', '‥', ' ']);
+        }
+        if i + 1 < parts.len() {
+            p = p.trim_end_matches(['…', '.', '‥', ' ']);
+        }
+        if !out.is_empty() && !p.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(p);
+    }
+    out
+}
+
+/// The translation of a joined phrase cut back into its bubbles, each getting
+/// a share like its original, cut after a comma or a dash where one is near,
+/// else between words; «…» marks where the phrase goes on, as in the original.
+pub fn split_phrase(ru: &str, parts: &[&str]) -> Vec<String> {
+    let n = parts.len();
+    if n <= 1 {
+        return vec![ru.trim().to_string()];
+    }
+    let words: Vec<&str> = ru.split_whitespace().collect();
+    if words.len() < n {
+        let mut v = vec![String::new(); n];
+        v[0] = ru.trim().to_string();
+        return v;
+    }
+    let lens: Vec<f32> = parts.iter().map(|p| p.trim_matches(['…', '.', '‥', ' ']).chars().count().max(1) as f32).collect();
+    let total_src: f32 = lens.iter().sum();
+    let total: usize = words.iter().map(|w| w.chars().count() + 1).sum();
+    let mut cuts = Vec::new(); // a cut goes after word index `k`
+    let mut acc = 0.0;
+    let mut from = 0;
+    for share in lens.iter().take(n - 1) {
+        acc += share / total_src;
+        let target = acc * total as f32;
+        let left = n - 1 - cuts.len(); // cuts still to place, this one included
+        let mut best = (f32::MAX, from);
+        let mut pos = 0usize;
+        for (k, w) in words.iter().enumerate() {
+            pos += w.chars().count() + 1;
+            if k < from || k + left >= words.len() {
+                continue;
+            }
+            let punct = w.ends_with([',', '—', '–', ';', ':', '…']) || words.get(k + 1).is_some_and(|x| *x == "—");
+            let cost = (pos as f32 - target).abs() / total as f32 - if punct { 0.15 } else { 0.0 };
+            if cost < best.0 {
+                best = (cost, k);
+            }
+        }
+        cuts.push(best.1);
+        from = best.1 + 1;
+    }
+    let mut out = Vec::with_capacity(n);
+    let mut start = 0;
+    for (i, &end) in cuts.iter().chain(std::iter::once(&(words.len() - 1))).enumerate() {
+        let mut piece = words[start..=end].join(" ");
+        let last = i + 1 == n;
+        if !last && parts[i].trim_end().ends_with(['…', '.', '‥']) {
+            while piece.ends_with([',', ';', ':']) {
+                piece.pop();
+            }
+            if !piece.ends_with(['…', '!', '?', '.']) {
+                piece.push('…');
+            }
+        }
+        if i > 0 {
+            let s = parts[i].trim_start();
+            if s.starts_with(['…', '.', '‥']) && !piece.starts_with('…') {
+                piece = format!("…{piece}");
+            }
+        }
+        out.push(piece);
+        start = end + 1;
+    }
+    out
+}
+
 /// The punctuation a phrase ends with, normalised: «...» → «…», «！» → «!».
 fn ending(s: &str) -> String {
     let t = s.trim_end();
@@ -195,6 +291,18 @@ mod tests {
         assert!(!continues("Hello.", "...what?"));
         assert!(!continues("Wait...", "Who are you?"));
         assert_eq!(room(200.0, 60.0, 20.0), 21 * 3);
+    }
+
+    #[test]
+    fn joins_and_cuts_a_phrase() {
+        let src = ["If you touch her again...", "...you're dead."];
+        assert_eq!(phrase_groups(&["Hi.", src[0], src[1], "Run!"]), vec![vec![0], vec![1, 2], vec![3]]);
+        assert_eq!(join_phrase(&src), "If you touch her again you're dead.");
+        let v = split_phrase("Если ты ещё раз её тронешь, ты труп.", &src);
+        assert_eq!(v, vec!["Если ты ещё раз её тронешь…", "…ты труп."]);
+        let v = split_phrase("Я хотел сказать, может, завтра.", &["I was going to say,", "maybe tomorrow."]);
+        assert_eq!(v.len(), 2);
+        assert!(v.iter().all(|x| !x.is_empty()));
     }
 
     #[test]

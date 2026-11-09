@@ -578,6 +578,36 @@ impl Translator {
     /// the bubbles of a page (in reading order), `Interface` for unrelated signs.
     /// `context`: the last bubbles of the previous page (original, translation), shown to the model for reference.
     pub async fn translate_batch(&self, preset: &ModelPreset, game: &str, items: &[String], kind: TextKind, context: &[(String, String)]) -> Result<Vec<Option<String>>> {
+        // Models that read only the text (Hy-MT2) are not told that bubbles go
+        // on with one phrase: such bubbles are joined into one before, and the
+        // translation is cut back into them after.
+        let json = prompt::batch_is_json(PromptStyle::parse(&preset.prompt));
+        let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+        let groups = manga_core::tone::phrase_groups(&refs);
+        if json || kind != TextKind::Dialogue || groups.len() == items.len() {
+            return self.translate_batch_as_is(preset, game, items, kind, context).await;
+        }
+        let joined: Vec<String> = groups.iter().map(|g| manga_core::tone::join_phrase(&g.iter().map(|&i| refs[i]).collect::<Vec<_>>())).collect();
+        for (g, j) in groups.iter().zip(&joined) {
+            if g.len() > 1 {
+                tracing::info!(target: "translate", "одна фраза в {} пузырях: {j}", g.len());
+                let t = self.hint(refs[g[0]]).tone;
+                self.note_hint(j, manga_core::tone::Hint { tone: t, room: 0 });
+            }
+        }
+        let got = self.translate_batch_as_is(preset, game, &joined, kind, context).await?;
+        let mut out = vec![None; items.len()];
+        for (g, t) in groups.iter().zip(got) {
+            let Some(t) = t else { continue };
+            let parts: Vec<&str> = g.iter().map(|&i| refs[i]).collect();
+            for (&i, piece) in g.iter().zip(manga_core::tone::split_phrase(&t, &parts)) {
+                out[i] = (!piece.is_empty()).then_some(piece);
+            }
+        }
+        Ok(out)
+    }
+
+    async fn translate_batch_as_is(&self, preset: &ModelPreset, game: &str, items: &[String], kind: TextKind, context: &[(String, String)]) -> Result<Vec<Option<String>>> {
         if items.is_empty() {
             return Ok(vec![]);
         }
