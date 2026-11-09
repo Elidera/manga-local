@@ -27,6 +27,8 @@ mod jaocr;
 #[cfg(windows)]
 mod journal;
 #[cfg(windows)]
+mod link;
+#[cfg(windows)]
 mod llm;
 #[cfg(windows)]
 mod neural;
@@ -200,6 +202,9 @@ mod app {
         let (srv_tx, srv_rx) = mpsc::unbounded_channel::<ServerCmd>();
         rt.spawn(server::supervise(shared.clone(), client, srv_rx));
         rt.spawn(dispatcher(shared.clone(), translator.clone(), ocr.clone(), cmd_rx, srv_tx));
+        if let Some(o) = ocr.clone() {
+            rt.spawn(crate::link::serve(shared.clone(), translator.clone(), o));
+        }
 
         // The panel is the only visible sign that the program runs: always show it at start.
         shared.ui(|u| {

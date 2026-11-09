@@ -150,6 +150,11 @@ fn reading(session: u64) -> bool {
     READING.load(Ordering::SeqCst) == session
 }
 
+/// The reading mode (F8) is on.
+pub fn reading_on() -> bool {
+    READING.load(Ordering::SeqCst) != 0
+}
+
 /// The texts to translate, split by kind: (dialogue, sound effects). Cached
 /// answers go straight into `done`.
 pub fn split_unique(items: &[InterfaceItem], tr: &Translator, model: &str, done: &mut HashMap<String, String>) -> (Vec<String>, Vec<String>) {
@@ -544,7 +549,14 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     }
     shared.ui(|u| u.interface = Some(InterfaceView { items: vec![], pending: 1, generation: gen }));
     let t0 = Instant::now();
-    let lines = match read_screen(ocr, &frame, cfg.interface.upscale, lang, &found).await {
+    // The browser extension sent the page's pictures: their text in full quality.
+    let from_page = crate::link::screen_lines(full, &frame, lang, ocr).await;
+    let source = if from_page.is_some() { "картинки страницы (расширение)" } else { "экран" };
+    let read = match from_page {
+        Some(l) => Ok(l),
+        None => read_screen(ocr, &frame, cfg.interface.upscale, lang, &found).await,
+    };
+    let lines = match read {
         Ok(l) => l,
         Err(e) => {
             shared.ui(|u| {
@@ -594,7 +606,7 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     let page = Page { frame: frame.clone(), area: full };
     if items.is_empty() {
         if outlines >= 2 {
-            crate::journal::begin(gen, &frame, lang, "экран", ocr_ms, outlines, &lines, &[], full);
+            crate::journal::begin(gen, &frame, lang, source, ocr_ms, outlines, &lines, &[], full);
             crate::journal::finish(shared, gen, false);
         }
         shared.ui(|u| {
@@ -624,7 +636,7 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
         it.dst = done.get(&it.src).cloned();
     }
     let n_pending = talk.len() + sfx.len();
-    crate::journal::begin(gen, &frame, lang, "экран", ocr_ms, outlines, &lines, &items, full);
+    crate::journal::begin(gen, &frame, lang, source, ocr_ms, outlines, &lines, &items, full);
     shared.ui(|u| u.interface = Some(InterfaceView { items, pending: n_pending, generation: gen }));
     if n_pending == 0 {
         crate::journal::finish(shared, gen, false);

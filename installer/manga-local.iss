@@ -57,6 +57,7 @@ Source: "{#Dist}\LLAMA_VERSION.txt"; DestDir: "{app}"; Components: app; Flags: i
 Source: "{#Dist}\glossary\*"; DestDir: "{app}\glossary"; Components: app; Flags: ignoreversion recursesubdirs
 Source: "{#Dist}\bench\*"; DestDir: "{app}\bench"; Components: app; Flags: ignoreversion recursesubdirs
 Source: "{#Dist}\fonts\*"; DestDir: "{app}\fonts"; Components: app; Flags: ignoreversion recursesubdirs
+Source: "{#Dist}\extension\*"; DestDir: "{app}\extension"; Components: app; Flags: ignoreversion recursesubdirs
 Source: "{#Dist}\llama-vulkan\*"; DestDir: "{app}\llama"; Components: vulkan; Flags: ignoreversion recursesubdirs
 Source: "{#Dist}\llama-cpu\*"; DestDir: "{app}\llama"; Components: cpu; Flags: ignoreversion recursesubdirs
 

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 290px; margin: 0; padding: 14px; background: #161a2e; color: #e8e8f2; font: 14px "Segoe UI", sans-serif; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  .st { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #666; flex: none; }
+  .dot.on { background: #e500e8; }
+  .hint { color: #9aa0bd; font-size: 12px; line-height: 1.4; margin: 6px 0; }
+  textarea { width: 100%; box-sizing: border-box; height: 56px; background: #232842; color: #e8e8f2; border: 1px solid #353b5c; border-radius: 8px; padding: 6px; font: inherit; resize: none; }
+  button { width: 100%; margin-top: 8px; padding: 9px; border: 0; border-radius: 10px; background: #e500e8; color: #fff; font: 600 14px "Segoe UI", sans-serif; cursor: pointer; }
+  button:disabled { background: #3a3f5c; color: #9aa0bd; cursor: default; }
+  #done { color: #e9a6ff; font-size: 12px; min-height: 16px; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <h1>Manga Local</h1>
+  <div class="st"><div class="dot" id="dot"></div><div id="status">Проверяю связь…</div></div>
+  <div class="hint" id="info"></div>
+  <textarea id="note" placeholder="Что не так? Необязательно: «имя переведено по-разному», «пузырь не переведён»…"></textarea>
+  <button id="mark" disabled>Здесь ошибка перевода</button>
+  <div id="done"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

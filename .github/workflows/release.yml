@@ -96,6 +96,7 @@ jobs:
           Copy-Item -Recurse assets/glossary dist/glossary
           Copy-Item -Recurse assets/bench dist/bench
           Copy-Item -Recurse assets/fonts dist/fonts
+          Copy-Item -Recurse extension dist/extension
           Copy-Item README.md, LICENSE dist/
 
       - name: Portable zip
