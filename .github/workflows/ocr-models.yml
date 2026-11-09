@@ -1,0 +1,49 @@
+# Checks that the neural OCR models (PaddleOCR via RapidOCR, Apache-2.0) can be
+# downloaded from where Manga Local takes them, and prints what is inside
+# (inputs, embedded alphabets). Nothing is published.
+name: ocr-models
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download
+        run: |
+          set -e
+          mkdir -p out
+          # PP-OCRv6 small (Chinese, English, Japanese) ships inside the RapidOCR wheel.
+          pip download --no-deps -d wheel rapidocr==3.10.0
+          unzip -q -o wheel/*.whl 'rapidocr/models/*' -d wheel
+          cp wheel/rapidocr/models/PP-OCRv6_det_small.onnx wheel/rapidocr/models/PP-OCRv6_rec_small.onnx out/
+          for f in PP-OCRv6/det/PP-OCRv6_det_small.onnx PP-OCRv6/rec/PP-OCRv6_rec_small.onnx PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx PP-OCRv5/rec/en_PP-OCRv5_rec_mobile.onnx \
+                   PP-OCRv5/rec/latin_PP-OCRv5_rec_mobile.onnx PP-OCRv6/det/PP-OCRv6_det_tiny.onnx; do
+            curl -fL --retry 3 -o "out/$(basename $f)" "$BASE/$f"
+          done
+          unzip -p wheel/*.whl 'rapidocr-*.dist-info/licenses/MODEL_LICENSES.md' > out/MODEL_LICENSES.md || true
+          ls -la out
+          pip install -q onnx
+          python3 - <<'PY'
+          import onnx, glob
+          for f in sorted(glob.glob('out/*.onnx')):
+              m = onnx.load(f, load_external_data=False)
+              meta = {p.key: len(p.value) for p in m.metadata_props}
+              print(f, meta)
+          PY
+          sha256sum out/*.onnx
+      - name: Mirrors
+        run: |
+          for u in https://huggingface.co/RapidAI/RapidOCR/resolve/main/onnx/PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx \
+                   https://huggingface.co/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx \
+                   https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/korean_PP-OCRv4_rec_infer.onnx; do
+            echo "$(curl -s -o /dev/null -L -w '%{http_code} %{size_download}' -r 0-0 "$u") $u"
+          done
