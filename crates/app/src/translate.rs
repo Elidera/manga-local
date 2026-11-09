@@ -36,6 +36,8 @@ pub struct Translator {
     last_dialogue: Mutex<Option<Instant>>,
     /// llama-server runs with one slot: serialize requests, dialogue first.
     gate: tokio::sync::Mutex<()>,
+    /// The intonation of bubbles seen on pages (shout, whisper, stutter…), by text.
+    tones: Mutex<std::collections::HashMap<String, manga_core::tone::Tone>>,
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +180,7 @@ impl Translator {
             names: Mutex::new(manga_core::names::NameWatch::new()),
             not_names: Mutex::new(not_names),
             last_dialogue: Mutex::new(None),
+            tones: Mutex::new(std::collections::HashMap::new()),
             gate: tokio::sync::Mutex::new(()),
         }
     }
@@ -372,6 +375,33 @@ impl Translator {
     }
 
     /// Instant answer without the model, if any.
+    /// Remember how a bubble is said (see `manga_core::tone`).
+    pub fn note_tone(&self, src: &str, t: manga_core::tone::Tone) {
+        let mut m = self.tones.lock().unwrap();
+        if t.is_plain() {
+            m.remove(src);
+            return;
+        }
+        if m.len() > 4000 {
+            m.clear();
+        }
+        m.insert(src.to_string(), t);
+    }
+
+    pub fn tone(&self, src: &str) -> manga_core::tone::Tone {
+        self.tones.lock().unwrap().get(src).copied().unwrap_or_default()
+    }
+
+    /// A finished translation with the bubble's intonation put back (ending
+    /// «!!», «…», a stutter; a shout in capitals). A failed one (the
+    /// original back) stays as it is.
+    pub fn toned(&self, src: &str, dst: String) -> String {
+        if dst == src {
+            return dst;
+        }
+        manga_core::tone::keep(src, &dst, self.tone(src))
+    }
+
     pub fn lookup(&self, model_id: &str, src: &str, kind: TextKind) -> Option<String> {
         if let Some(c) = self.corrections.lock().unwrap().get(&[src]) {
             return Some(c.to_string());
@@ -569,7 +599,8 @@ impl Translator {
             let refs: Vec<&str> = items.iter().map(String::as_str).collect();
             // A bubble still on screen is translated anew, not copied from the context.
             let ctx: Vec<(&str, &str)> = context.iter().filter(|(s, _)| !items.contains(s)).map(|(s, t)| (s.as_str(), t.as_str())).collect();
-            prompt::build_batch(PromptStyle::parse(&preset.prompt), &refs, &terms, game, kind, &ctx)
+            let tones: Vec<manga_core::tone::Tone> = items.iter().map(|s| self.tone(s)).collect();
+            prompt::build_batch(PromptStyle::parse(&preset.prompt), &refs, &terms, game, kind, &ctx, &tones)
         };
         let mut p = preset.clone();
         // Russian takes ~2–3 tokens per CJK character; bubbles are longer than labels.

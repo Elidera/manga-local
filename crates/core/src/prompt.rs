@@ -284,7 +284,8 @@ pub const BATCH_SEP: &str = "|||";
 /// `context`: the last bubbles of the previous page (original, translation) —
 /// so the model keeps who speaks to whom, genders and names across pages. They
 /// are shown for reference only; the numbered items keep the answer apart.
-pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &str, kind: TextKind, context: &[(&str, &str)]) -> Vec<Message> {
+/// `tones`: the intonation of each item (may be empty), told to instruct models.
+pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &str, kind: TextKind, context: &[(&str, &str)], tones: &[crate::tone::Tone]) -> Vec<Message> {
     let n = items.len();
     // Numbered so a dropped or merged item does not shift all the others.
     let joined = items.iter().enumerate().map(|(i, s)| format!("[{}]{s}", i + 1)).collect::<Vec<_>>().join(BATCH_SEP);
@@ -351,7 +352,10 @@ pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &s
             sys.push_str(&format!(
                 "\n9. На вход подаётся JSON-объект: {n} {what}; ключ — номер, значение — текст. \
                  Переведи каждую отдельно (но с учётом общего разговора) и ответь JSON-объектом с теми же ключами, \
-                 где значение — перевод на русский. Только JSON, без пояснений."
+                 где значение — перевод на русский. Только JSON, без пояснений.\n\
+                 10. Сохраняй манеру речи: заикание (Н-нет, Я… я), обрывы фраз («…»), «!!» и «?!» на конце. \
+                 Не исправляй и не «причёсывай» речь героя. Если у реплики указана «интонация»: крик — коротко и резко, \
+                 с теми же «!»; шёпот — тихо и коротко; заикание — сохрани заикание через дефис; обрыв — оставь фразу недоговорённой."
             ));
             let mut u = String::new();
             if !terms.is_empty() {
@@ -369,7 +373,7 @@ pub fn build_batch(style: PromptStyle, items: &[&str], terms: &[&Term], game: &s
                 u.push('\n');
             }
             u.push_str("Переведи на русский:\n");
-            u.push_str(&batch_json(items));
+            u.push_str(&batch_json_toned(items, tones));
             vec![Message { role: "system", content: sys }, Message { role: "user", content: u }]
         }
     }
@@ -384,6 +388,23 @@ fn batch_key(i: usize) -> String {
 /// The page for an instruct model: a JSON object {"01": "…", "02": "…"}.
 pub fn batch_json(items: &[&str]) -> String {
     let body: Vec<String> = items.iter().enumerate().map(|(i, s)| format!("  \"{}\": {}", batch_key(i), serde_json::Value::String(s.to_string()))).collect();
+    format!("{{\n{}\n}}", body.join(",\n"))
+}
+
+/// As `batch_json`, with the intonation of a bubble that has one:
+/// {"02": {"текст": "…", "интонация": "крик"}}.
+pub fn batch_json_toned(items: &[&str], tones: &[crate::tone::Tone]) -> String {
+    let body: Vec<String> = items
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let text = serde_json::Value::String(s.to_string());
+            match tones.get(i).and_then(|t| t.label()) {
+                Some(l) => format!("  \"{}\": {{\"текст\": {text}, \"интонация\": \"{l}\"}}", batch_key(i)),
+                None => format!("  \"{}\": {text}", batch_key(i)),
+            }
+        })
+        .collect();
     format!("{{\n{}\n}}", body.join(",\n"))
 }
 
@@ -700,7 +721,7 @@ mod tests {
         assert!(c.ends_with("\n\nRover, we need to reach Jinzhou."));
         let m = build(PromptStyle::Instruct, &inp);
         assert!(m[0].content.contains("с английского"));
-        let b = build_batch(PromptStyle::HyMt, &["Inventory", "Quests"], &[], "G", TextKind::Interface, &[]);
+        let b = build_batch(PromptStyle::HyMt, &["Inventory", "Quests"], &[], "G", TextKind::Interface, &[], &[]);
         assert!(b[0].content.contains("same number of delimiters"));
         // Untranslated English answer is rejected; Russian with a Latin name passes.
         assert_eq!(clean_output("Rover, we need to go.", "Rover, we need to go."), Err(Reject::NotTranslated));
@@ -727,15 +748,15 @@ mod tests {
     #[test]
     fn previous_page_as_context() {
         let ctx = [("선배, 늦었어요!", "Сонбэ, вы опоздали!")];
-        let b = build_batch(PromptStyle::HyMt, &["미안해.", "가자."], &[], "", TextKind::Dialogue, &ctx);
+        let b = build_batch(PromptStyle::HyMt, &["미안해.", "가자."], &[], "", TextKind::Dialogue, &ctx, &[]);
         let p = &b[0].content;
         assert!(p.contains("선배, 늦었어요! → Сонбэ, вы опоздали!"));
         // The context comes before the items to translate; the items end the prompt.
         assert!(p.find("Сонбэ").unwrap() < p.find("[1]미안해.").unwrap());
         assert!(p.ends_with("[2]가자."));
-        let i = build_batch(PromptStyle::Instruct, &["미안해."], &[], "", TextKind::Dialogue, &ctx);
+        let i = build_batch(PromptStyle::Instruct, &["미안해."], &[], "", TextKind::Dialogue, &ctx, &[]);
         assert!(i[1].content.contains("Предыдущие реплики") && i[1].content.ends_with("\"01\": \"미안해.\"\n}"));
-        let none = build_batch(PromptStyle::HyMt, &["미안해."], &[], "", TextKind::Dialogue, &[]);
+        let none = build_batch(PromptStyle::HyMt, &["미안해."], &[], "", TextKind::Dialogue, &[], &[]);
         assert!(!none[0].content.contains("Background"));
     }
 
@@ -758,7 +779,7 @@ mod tests {
         assert!(ja[0].content.contains("с японского"));
         assert!(ja[0].content.contains("Поливанова"));
         assert!(!ja[0].content.contains("«»"), "empty title must not be quoted");
-        let b = build_batch(PromptStyle::HyMt, &["뭐야?", "왔어."], &[], "", TextKind::Dialogue, &[]);
+        let b = build_batch(PromptStyle::HyMt, &["뭐야?", "왔어."], &[], "", TextKind::Dialogue, &[], &[]);
         assert!(b[0].content.contains("2 speech bubbles of one comic page"), "{}", b[0].content);
         assert!(b[0].content.contains("Korean text"));
         assert!(b[0].content.ends_with("[1]뭐야?|||[2]왔어."));
@@ -786,7 +807,7 @@ mod tests {
     #[test]
     fn batch_roundtrip() {
         let t = term("背包", "Инвентарь");
-        let m = build_batch(PromptStyle::HyMt, &["背包", "任务", "设置"], &[&t], "G", TextKind::Interface, &[]);
+        let m = build_batch(PromptStyle::HyMt, &["背包", "任务", "设置"], &[&t], "G", TextKind::Interface, &[], &[]);
         assert!(m[0].content.contains("[1]背包|||[2]任务|||[3]设置"));
         // Model dropped item 2 and added a leading separator: the others survive.
         let r = parse_batch_indexed("|||[1]Инвентарь|||[3] Настройки", 3);
@@ -800,9 +821,13 @@ mod tests {
             vec![Some("Инвентарь".to_string()), Some("Почта".to_string()), Some("Отмена".to_string())]
         );
         assert!(m[0].content.starts_with("参考下面的翻译"));
-        let m = build_batch(PromptStyle::Instruct, &["背包", "任务"], &[], "G", TextKind::Interface, &[]);
+        let m = build_batch(PromptStyle::Instruct, &["背包", "任务"], &[], "G", TextKind::Interface, &[], &[]);
         assert_eq!(m[0].role, "system");
         assert!(m[1].content.contains("\"01\": \"背包\""), "{}", m[1].content);
+        let shout = crate::tone::detect("STOP!!", 1.0);
+        let m = build_batch(PromptStyle::Instruct, &["STOP!!", "ok"], &[], "", TextKind::Dialogue, &[], &[shout, crate::tone::Tone::default()]);
+        assert!(m[1].content.contains("\"01\": {\"текст\": \"STOP!!\", \"интонация\": \"крик\"}"), "{}", m[1].content);
+        assert!(m[1].content.contains("\"02\": \"ok\""));
         // JSON answers: in any key order, with talk around, keys with or without the zero.
         assert_eq!(parse_batch_any("Вот перевод:\n{\"02\": \"Задания\", \"01\": \"Инвентарь\"}", 2), vec![Some("Инвентарь".to_string()), Some("Задания".to_string())]);
         assert_eq!(parse_batch_any("{\"1\": \"Инвентарь\"}", 2), vec![Some("Инвентарь".to_string()), None]);

@@ -98,7 +98,7 @@ fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found:
     let rects: Vec<Rect> = kept.iter().map(|l| l.rect).collect();
     // Lines inside one bubble outline are one bubble, whatever the spacing.
     let groups = layout::group_in_outlines(&rects, &outlines);
-    groups
+    let items = groups
         .iter()
         .map(|g| {
             let mut rect = layout::block_rect(&rects, g);
@@ -114,6 +114,8 @@ fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found:
             }
             let texts: Vec<&str> = g.iter().map(|&i| kept[i].text.as_str()).collect();
             let mut src = tr.fix_ocr(&manga_core::text::join_lines_for(&texts, lang));
+            // As read, before the change of case: for the intonation below.
+            let raw = src.clone();
             if lang == Lang::En {
                 src = manga_core::text::sentence_case_en(&src);
             }
@@ -144,9 +146,23 @@ fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found:
                 tracing::debug!(target: "interface", "обрывок вне пузыря пропущен: «{src}»");
                 src.clear();
             }
-            InterfaceItem { fg, busy, bg, rect, src, dst: None, line_h, lines: g.len(), patch: patch.map(Arc::new), sfx }
+            (InterfaceItem { fg, busy, bg, rect, src, dst: None, line_h, lines: g.len(), patch: patch.map(Arc::new), sfx }, raw)
         })
-        .filter(|it| !it.src.is_empty())
+        .filter(|(it, _)| !it.src.is_empty())
+        .collect::<Vec<_>>();
+    // How each bubble is said: its letters against the usual ones of the page.
+    let mut heights: Vec<f32> = items.iter().filter(|(it, _)| !it.sfx).map(|(it, _)| it.line_h).collect();
+    heights.sort_by(f32::total_cmp);
+    let usual = heights.get(heights.len() / 2).copied().unwrap_or(0.0);
+    items
+        .into_iter()
+        .map(|(it, raw)| {
+            let size = if usual > 0.0 && heights.len() >= 3 { it.line_h / usual } else { 0.0 };
+            if !it.sfx {
+                tr.note_tone(&it.src, manga_core::tone::detect(&raw, size));
+            }
+            it
+        })
         .collect()
 }
 
@@ -175,7 +191,7 @@ pub fn split_unique(items: &[InterfaceItem], tr: &Translator, model: &str, done:
         let kind = if it.sfx { TextKind::Interface } else { TextKind::Dialogue };
         match tr.lookup(model, &it.src, kind) {
             Some(t) => {
-                done.insert(it.src.clone(), t);
+                done.insert(it.src.clone(), tr.toned(&it.src, t));
             }
             None => list.push(it.src.clone()),
         }
@@ -793,7 +809,7 @@ pub async fn translate_texts(
                     rest.clear();
                     for (src, dst) in chunk.iter().zip(out) {
                         match dst {
-                            Some(d) => done(src, d),
+                            Some(d) => done(src, tr.toned(src, d)),
                             None => rest.push(src.clone()),
                         }
                     }
@@ -819,7 +835,7 @@ pub async fn translate_texts(
                     src.clone()
                 }
             };
-            done(&src, dst);
+            done(&src, tr.toned(&src, dst));
         }
     }
 }

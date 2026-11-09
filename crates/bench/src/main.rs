@@ -179,7 +179,9 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
             }
         }
         let ctx: Vec<(&str, &str)> = if a.context { prev.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect() } else { Vec::new() };
-        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue, &ctx);
+        // The intonation as the app finds it (no letter sizes here).
+        let tones: Vec<manga_core::tone::Tone> = chunk.iter().map(|l| manga_core::tone::detect(l, 0.0)).collect();
+        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue, &ctx, &tones);
         let mut page: Vec<(String, String)> = Vec::new();
         let need: usize = chunk.iter().map(|s| s.chars().count() * 3 + 24).sum();
         let json = prompt::batch_is_json(style);
@@ -197,7 +199,7 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
             batch_ok += 1;
         }
         for (l, p) in chunk.iter().zip(parts) {
-            if let Some(t) = p.as_ref().and_then(|p| prompt::clean_output(p, l).ok()) {
+            if let Some(t) = p.as_ref().and_then(|p| prompt::clean_output(p, l).ok()).map(|t| manga_core::tone::keep(l, &t, manga_core::tone::detect(l, 0.0))) {
                 let leaked = ctx.iter().any(|(_, c)| c.chars().count() > 6 && t.contains(c));
                 if leaked {
                     leaks += 1;

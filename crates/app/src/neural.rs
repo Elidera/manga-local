@@ -187,7 +187,10 @@ fn load(dir: &Path, lang: Lang) -> anyhow::Result<Engine> {
     // Half the cores: the translation model and the browser need the rest.
     let threads = std::thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(2, 8);
     let (det, rec) = (dir.join(DET.0), dir.join(rec_for(lang).0));
-    if !(GPU.load(Ordering::Relaxed) && gpu_available()) {
+    // A real video card only: the stand-in Windows gives without one
+    // (Microsoft Basic Render, virtual machines) is slower than the processor.
+    let real_card = crate::win::gpu().is_some_and(|(name, mem)| mem > 0 && !name.contains("Microsoft") && !name.contains("Hyper-V") && !name.contains("VMware"));
+    if !(GPU.load(Ordering::Relaxed) && gpu_available() && real_card) {
         return neural_ocr::Engine::load(&det, &rec, threads, false);
     }
     match CHOSEN.load(Ordering::Relaxed) {
@@ -222,19 +225,25 @@ fn load(dir: &Path, lang: Lang) -> anyhow::Result<Engine> {
 /// runs: the first prepares the video card).
 #[cfg(feature = "neural-ocr")]
 fn speed(e: &Engine) -> Option<u128> {
-    let (w, h) = (1600u32, 900u32);
+    // A wide screen and a tall page: the video card prepares itself for every
+    // new size, so two sizes show that cost too.
+    Some(speed_at(e, 1600, 900)? + speed_at(e, 1000, 1400)?)
+}
+
+#[cfg(feature = "neural-ocr")]
+fn speed_at(e: &Engine, w: u32, h: u32) -> Option<u128> {
     let mut px = vec![255u8; (w * h * 4) as usize];
     // Dark bars like lines of text, so the reader has work to do.
     for row in 0..8u32 {
         for y in 100 + row * 90..130 + row * 90 {
-            for x in (200..1300).filter(|x| x % 23 < 15) {
+            for x in (200..w.min(1300)).filter(|x| x % 23 < 15) {
                 let i = ((y * w + x) * 4) as usize;
                 px[i..i + 3].copy_from_slice(&[20, 20, 20]);
             }
         }
     }
     let f = manga_core::image::Frame::new(w, h, px);
-    let boxes: Vec<manga_core::image::Rect> = (0..8).map(|r| manga_core::image::Rect { x: 190.0, y: 95.0 + r as f32 * 90.0, w: 1120.0, h: 40.0 }).collect();
+    let boxes: Vec<manga_core::image::Rect> = (0..8).map(|r| manga_core::image::Rect { x: 190.0, y: 95.0 + r as f32 * 90.0, w: (w.min(1300) - 180) as f32, h: 40.0 }).collect();
     let mut best = None;
     for _ in 0..2 {
         let t = std::time::Instant::now();

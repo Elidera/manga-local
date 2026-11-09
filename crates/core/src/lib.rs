@@ -22,4 +22,5 @@ pub mod raster;
 pub mod selftest;
 pub mod similarity;
 pub mod text;
+pub mod tone;
 pub mod tsv;
