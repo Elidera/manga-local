@@ -53,6 +53,7 @@ static GPU: AtomicBool = AtomicBool::new(true);
 pub fn set_gpu(on: bool) {
     if GPU.swap(on, Ordering::Relaxed) != on {
         *CACHE.lock().unwrap() = None;
+        CHOSEN.store(0, Ordering::Relaxed);
     }
 }
 
@@ -165,7 +166,7 @@ pub fn engine(lang: Lang) -> Option<Arc<Engine>> {
             tracing::info!(
                 "распознавание-нейросеть: загружено для языка «{}» ({})",
                 lang.name_ru(),
-                if GPU.load(Ordering::Relaxed) && gpu_available() { "видеокарта, если подходит" } else { "процессор" }
+                if GPU.load(Ordering::Relaxed) && gpu_available() && CHOSEN.load(Ordering::Relaxed) == 1 { "видеокарта" } else { "процессор" }
             );
             let e = Arc::new(e);
             map.insert(key, e.clone());
@@ -178,11 +179,70 @@ pub fn engine(lang: Lang) -> Option<Arc<Engine>> {
     }
 }
 
+/// What the speed test chose: 0 not yet, 1 video card, 2 processor.
+static CHOSEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
 #[cfg(feature = "neural-ocr")]
 fn load(dir: &Path, lang: Lang) -> anyhow::Result<Engine> {
     // Half the cores: the translation model and the browser need the rest.
     let threads = std::thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(2, 8);
-    neural_ocr::Engine::load(&dir.join(DET.0), &dir.join(rec_for(lang).0), threads, GPU.load(Ordering::Relaxed))
+    let (det, rec) = (dir.join(DET.0), dir.join(rec_for(lang).0));
+    if !(GPU.load(Ordering::Relaxed) && gpu_available()) {
+        return neural_ocr::Engine::load(&det, &rec, threads, false);
+    }
+    match CHOSEN.load(Ordering::Relaxed) {
+        1 => return neural_ocr::Engine::load(&det, &rec, threads, true),
+        2 => return neural_ocr::Engine::load(&det, &rec, threads, false),
+        _ => {}
+    }
+    // The first time: both tried on the same picture, the faster one stays (a
+    // weak or missing video card can be slower than the processor).
+    let cpu = neural_ocr::Engine::load(&det, &rec, threads, false)?;
+    let gpu = match neural_ocr::Engine::load(&det, &rec, threads, true) {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::warn!("распознавание на видеокарте не запустилось: {e:#}");
+            CHOSEN.store(2, Ordering::Relaxed);
+            return Ok(cpu);
+        }
+    };
+    let (t_cpu, t_gpu) = (speed(&cpu), speed(&gpu));
+    let use_gpu = t_gpu.is_some_and(|g| t_cpu.is_none_or(|c| g < c));
+    tracing::info!(
+        "распознавание-нейросеть, проверка скорости: процессор {} мс, видеокарта {} мс → {}",
+        t_cpu.map_or("—".into(), |t| t.to_string()),
+        t_gpu.map_or("—".into(), |t| t.to_string()),
+        if use_gpu { "видеокарта" } else { "процессор" }
+    );
+    CHOSEN.store(if use_gpu { 1 } else { 2 }, Ordering::Relaxed);
+    Ok(if use_gpu { gpu } else { cpu })
+}
+
+/// Milliseconds for a screen-sized picture with 8 lines (the second of two
+/// runs: the first prepares the video card).
+#[cfg(feature = "neural-ocr")]
+fn speed(e: &Engine) -> Option<u128> {
+    let (w, h) = (1600u32, 900u32);
+    let mut px = vec![255u8; (w * h * 4) as usize];
+    // Dark bars like lines of text, so the reader has work to do.
+    for row in 0..8u32 {
+        for y in 100 + row * 90..130 + row * 90 {
+            for x in (200..1300).filter(|x| x % 23 < 15) {
+                let i = ((y * w + x) * 4) as usize;
+                px[i..i + 3].copy_from_slice(&[20, 20, 20]);
+            }
+        }
+    }
+    let f = manga_core::image::Frame::new(w, h, px);
+    let boxes: Vec<manga_core::image::Rect> = (0..8).map(|r| manga_core::image::Rect { x: 190.0, y: 95.0 + r as f32 * 90.0, w: 1120.0, h: 40.0 }).collect();
+    let mut best = None;
+    for _ in 0..2 {
+        let t = std::time::Instant::now();
+        e.det.find(&f).ok()?;
+        e.rec.read(&f, &boxes).ok()?;
+        best = Some(t.elapsed().as_millis());
+    }
+    best
 }
 
 #[cfg(not(feature = "neural-ocr"))]
