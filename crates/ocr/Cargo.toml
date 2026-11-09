@@ -1,0 +1,24 @@
+[package]
+name = "manga-neural-ocr"
+description = "Text detection and recognition for comic pages with PaddleOCR models (ONNX): finds every text line on a page and reads it. Platform-independent."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "neural_ocr"
+
+[dependencies]
+manga-core = { path = "../core" }
+anyhow = "1"
+# The same ONNX Runtime binding as manga-ocr-rs (vertical Japanese) uses.
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "api-24"] }
+
+[features]
+# Windows release: ONNX Runtime linked in (downloaded at build time).
+download = ["ort/download-binaries", "ort/tls-rustls"]
+# Tests and tools: ONNX Runtime loaded at run time (ORT_DYLIB_PATH).
+dynamic = ["ort/load-dynamic"]
+
+[dev-dependencies]
+manga-pages = { path = "../pages" }

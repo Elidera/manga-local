@@ -296,6 +296,10 @@ fn letters_upscale(base: u32, found: &[manga_core::bubbles::Found], x: f32, w: f
 /// ordinary bubbles, and a bigger bold first line («HEY!») next to normal
 /// ones. Vertical Japanese is left to manga-ocr. Returns the lines to use.
 async fn reread_bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ocr: &Ocr, found: &[manga_core::bubbles::Found]) -> Vec<OcrLine> {
+    // The neural OCR reads every line at its own size already.
+    if crate::neural::active(lang) {
+        return lines.to_vec();
+    }
     let inside = |r: &Rect, o: &Rect| {
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h
@@ -526,10 +530,20 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     if !reading(session) {
         return None;
     }
+    let lang = cfg.source_lang();
     let found = manga_core::bubbles::find(&frame);
+    // Neural OCR chosen but this language not downloaded yet: Windows OCR
+    // reads meanwhile, the files come in the background (asked once).
+    if crate::neural::wanted() && !crate::neural::active(lang) {
+        static ASKED: std::sync::Mutex<Vec<Lang>> = std::sync::Mutex::new(Vec::new());
+        let mut asked = ASKED.lock().unwrap();
+        if !asked.contains(&lang) {
+            asked.push(lang);
+            shared.send(crate::state::Command::DownloadNeural);
+        }
+    }
     shared.ui(|u| u.interface = Some(InterfaceView { items: vec![], pending: 1, generation: gen }));
     let t0 = Instant::now();
-    let lang = cfg.source_lang();
     let lines = match read_screen(ocr, &frame, cfg.interface.upscale, lang, &found).await {
         Ok(l) => l,
         Err(e) => {

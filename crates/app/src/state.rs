@@ -74,6 +74,8 @@ pub enum Command {
     IgnoreName(String),
     /// Download the manga-ocr model (vertical Japanese).
     DownloadJaOcr,
+    /// Neural OCR files for the current language of the text.
+    DownloadNeural,
     /// Open the dictionary of the current title (created on first use).
     OpenTitleDict,
     /// Game profile or text language changed: reload dictionaries, check OCR.
@@ -207,6 +209,8 @@ pub struct UiState {
     pub files_progress: Option<String>,
     /// Vertical Japanese (manga-ocr): download progress or a problem.
     pub ja_ocr_status: Option<String>,
+    /// Neural OCR: download progress or a problem.
+    pub neural_status: Option<String>,
     /// Character names noticed in translations, offered for the title's dictionary.
     pub name_offers: Vec<(String, String)>,
     /// The page looks like another language than the chosen one: (chosen, seen),

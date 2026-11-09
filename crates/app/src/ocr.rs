@@ -1,8 +1,9 @@
 //! Windows OCR (Windows.Media.Ocr) on a dedicated COM/WinRT thread.
 //!
 //! MVP engine: built into Windows 10/11, no extra download besides the OCR
-//! language components (Korean, Japanese, Chinese), returns per-word boxes. PaddleOCR via ONNX Runtime
-//! is planned behind the same `OcrLine` interface.
+//! language components (Korean, Japanese, Chinese), returns per-word boxes.
+//! When the neural OCR is chosen and downloaded (`crate::neural`, PaddleOCR),
+//! `recognize` reads with it instead, behind the same `OcrLine` interface.
 
 use anyhow::{anyhow, Context, Result};
 use std::sync::mpsc;
@@ -91,6 +92,9 @@ impl Ocr {
     }
 
     pub async fn check(&self, lang: Lang) -> Result<()> {
+        if crate::neural::active(lang) {
+            return Ok(()); // no Windows language component needed
+        }
         let (reply, rx) = oneshot::channel();
         self.tx.send(Job::Check { lang, reply }).map_err(|_| anyhow!("поток OCR недоступен"))?;
         rx.await.map_err(|_| anyhow!("поток OCR не ответил"))?
@@ -99,6 +103,30 @@ impl Ocr {
     /// Recognize a frame. If it is larger than the engine limit it is split
     /// into overlapping tiles and the results are merged.
     pub async fn recognize(&self, frame: Frame, upscale: u32, lang: Lang) -> Result<Vec<OcrLine>> {
+        // The neural OCR when it is chosen and downloaded: it finds the text
+        // lines itself at any size, so no upscale and no tiles.
+        let frame = if crate::neural::active(lang) {
+            let (frame_back, read) = tokio::task::spawn_blocking(move || {
+                let read = crate::neural::engine(lang)
+                    .ok_or_else(|| anyhow!("распознавание-нейросеть не загрузилось"))
+                    .and_then(|e| crate::neural::read(&e, &frame, lang));
+                (frame, read)
+            })
+            .await
+            .map_err(|e| anyhow!("распознавание-нейросеть: {e}"))?;
+            match read {
+                Ok(lines) => return Ok(lines),
+                // Something wrong with the model files or the runtime: Windows
+                // OCR from now on (the setting stays; a restart tries again).
+                Err(e) => {
+                    tracing::warn!("распознавание-нейросеть: {e:#}; дальше читаю распознаванием Windows");
+                    crate::neural::set_on(false);
+                }
+            }
+            frame_back
+        } else {
+            frame
+        };
         let k = upscale.max(1);
         let max = self.max_dim.max(512);
         // Fast path: fits after upscaling.

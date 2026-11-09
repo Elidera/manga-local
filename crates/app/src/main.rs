@@ -27,6 +27,8 @@ mod jaocr;
 #[cfg(windows)]
 mod llm;
 #[cfg(windows)]
+mod neural;
+#[cfg(windows)]
 mod mascot;
 #[cfg(windows)]
 mod ocr;
@@ -145,6 +147,9 @@ mod app {
             reset_watcher: AtomicBool::new(false),
             overlay_px: Mutex::new(Vec::new()),
         });
+
+        crate::neural::init(crate::neural::model_dir(&shared));
+        crate::neural::set_on(cfg.interface.ocr_engine == "neural");
 
         // Hotkeys.
         let problems = hotkeys::spawn(&cfg.hotkeys, cmd_tx.clone());
@@ -460,7 +465,25 @@ mod app {
                         });
                     });
                 }
-                Command::SaveConfig => shared.save_config(),
+                Command::SaveConfig => {
+                    crate::neural::set_on(shared.cfg().interface.ocr_engine == "neural");
+                    shared.save_config();
+                }
+                Command::DownloadNeural => {
+                    let sh = shared.clone();
+                    let lang = shared.cfg().source_lang();
+                    tokio::spawn(async move {
+                        sh.ui(|u| u.neural_status = Some("Скачиваю распознавание…".into()));
+                        let r = crate::neural::download(sh.clone(), lang).await;
+                        sh.ui(|u| match &r {
+                            Ok(()) => {
+                                u.neural_status = None;
+                                u.notice(format!("Распознавание-нейросеть для языка «{}» скачано и включено", lang.name_ru()));
+                            }
+                            Err(e) => u.neural_status = Some(format!("Не скачалось: {e}. Проверьте интернет и попробуйте ещё раз")),
+                        });
+                    });
+                }
                 Command::Open(p) => open_path(&p),
                 Command::OpenTitleDict => {
                     let title = shared.cfg().general.game_title;

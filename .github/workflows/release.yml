@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test -p manga-core -p manga-pages
+      # The OCR engine's own tests need no ONNX Runtime (loaded at run time when used).
+      - run: cargo test -p manga-neural-ocr --features dynamic
 
   windows:
     runs-on: windows-latest
@@ -198,6 +200,32 @@ jobs:
           if (Test-Path hard-report.md) { Get-Content hard-report.md }
           exit 0
 
+      - name: Neural OCR models (PaddleOCR via RapidOCR, Apache-2.0)
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force ocr-models | Out-Null
+          $base = 'https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx'
+          foreach ($f in 'PP-OCRv6/det/PP-OCRv6_det_small.onnx','PP-OCRv6/rec/PP-OCRv6_rec_small.onnx',
+                         'PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx','PP-OCRv5/rec/en_PP-OCRv5_rec_mobile.onnx') {
+            curl.exe -fsSL --retry 3 -o "ocr-models/$(Split-Path $f -Leaf)" "$base/$f"
+          }
+          Get-ChildItem ocr-models | Format-Table Name, Length
+
+      - name: Neural OCR on all pages (report only)
+        if: always()
+        shell: pwsh
+        timeout-minutes: 20
+        continue-on-error: true
+        run: |
+          foreach ($d in 'screens','hard') {
+            $p = Start-Process -FilePath app\MangaLocal\manga-local.exe -ArgumentList '--selftest',"tests\$d",'--out',"neural-$d-report.md",'--ja-models','ja-models','--neural','ocr-models' -Wait -PassThru
+            Write-Host "$d exit code $($p.ExitCode)"
+            if (Test-Path "neural-$d-report.md") { Get-Content "neural-$d-report.md" }
+          }
+          exit 0
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -205,4 +233,6 @@ jobs:
           path: |
             selftest-report.md
             hard-report.md
+            neural-screens-report.md
+            neural-hard-report.md
           retention-days: 7

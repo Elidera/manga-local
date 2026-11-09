@@ -839,12 +839,31 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
         c.apply_profile();
     }
 
-    any |= search_card(ui, "Перевод страницы", "как показывать замена в пузыре подложкой списком размер шрифта высоты исходного текста звуки звукоподражания sfx бах вертикальный японский манга столбцы рукописные помнить предыдущую страницу контекст оригинал под мышью наведение следить за прокруткой листать скрывать при прокрутке шрифт перевода комикс пожелание к стилю gemma", |ui| {
+    any |= search_card(ui, "Перевод страницы", "распознавание текста windows нейросеть ocr paddle заголовки обводка как показывать замена в пузыре подложкой списком размер шрифта высоты исходного текста звуки звукоподражания sfx бах вертикальный японский манга столбцы рукописные помнить предыдущую страницу контекст оригинал под мышью наведение следить за прокруткой листать скрывать при прокрутке шрифт перевода комикс пожелание к стилю gemma", |ui| {
+        let text_lang = c.general.source_lang.clone();
         let i = &mut c.interface;
         dirty |= setting_row(ui, "Как показывать", "Замена — перевод внутри пузыря поверх оригинала", |ui| segmented(ui, &mut i.mode, &[("replace", "Замена"), ("backdrop", "Подложка"), ("list", "Списком")]));
         dirty |= setting_row(ui, "Размер шрифта", "Относительно высоты исходного текста; если не влезает — уменьшается сам", |ui| {
             ui.add(egui::Slider::new(&mut i.font_scale, 0.5..=1.2).custom_formatter(|v, _| format!("{:.0} %", v * 100.0))).changed()
         });
+        if crate::neural::available() {
+            let was = i.ocr_engine.clone();
+            let lang = text_lang.clone();
+            let dir = crate::neural::model_dir(shared);
+            let left = crate::neural::missing_mb(&dir, manga_core::lang::Lang::from_code(&lang));
+            let note = if left > 0 {
+                format!("Нейросеть читает заголовки, текст с обводкой и свечением, наклонный текст (для этого языка скачается ~{left} МБ)")
+            } else {
+                "Нейросеть читает заголовки, текст с обводкой и свечением, наклонный текст; Windows — встроенное, быстрее на слабых ПК".to_string()
+            };
+            dirty |= setting_row(ui, "Распознавание текста", &note, |ui| segmented(ui, &mut i.ocr_engine, &[("windows", "Windows"), ("neural", "Нейросеть")]));
+            if i.ocr_engine == "neural" && was != "neural" && left > 0 {
+                shared.send(Command::DownloadNeural);
+            }
+            if let Some(s) = shared.ui.lock().unwrap().neural_status.clone() {
+                hint(ui, &s);
+            }
+        }
         if crate::jaocr::available() {
             let was = i.vertical_ja;
             dirty |= setting_row(ui, "Вертикальный японский", "Манга: столбцы текста и рукописные надписи читает отдельная нейросеть (скачается ~440 МБ)", |ui| toggle(ui, &mut i.vertical_ja).changed());

@@ -101,6 +101,11 @@ pub fn run_cli(args: &[String]) -> i32 {
     let out = arg_after(args, "--out").map(PathBuf::from).unwrap_or_else(|| dir.join("report.md"));
     // `--ja-models <folder>`: manga-ocr model files, for pages with vertical Japanese.
     let ja = arg_after(args, "--ja-models").and_then(|d| crate::jaocr::engine_from(Path::new(&d)));
+    // `--neural <folder>`: read with the neural OCR (PaddleOCR files there).
+    if let Some(d) = arg_after(args, "--neural") {
+        crate::neural::init(PathBuf::from(d));
+        crate::neural::set_on(true);
+    }
     let (code, md) = match run(&dir, ja) {
         Ok((code, md)) => (code, md),
         Err(e) => (2, format!("# Проверка на снимках\n\nНе запустилась: {e:#}\n")),
@@ -161,7 +166,8 @@ fn run(dir: &Path, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Result<(i32, String)
         }
         results.push(res);
     }
-    let md = st::report(&results, "Проверка на снимках экрана");
+    let title = if crate::neural::wanted() { "Проверка на снимках экрана (распознавание-нейросеть)" } else { "Проверка на снимках экрана" };
+    let md = st::report(&results, title);
     let code = if results.iter().all(CaseResult::passed) {
         0
     } else if no_ocr.is_some() && results.iter().all(|r| r.error.is_some()) {

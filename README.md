@@ -75,3 +75,16 @@ cargo build -p manga-local --release  # Windows 10/11 x64, MSVC
 (Balsamiq Sans Project Authors) и Pangolin (Pangolin Project Authors), лицензия
 SIL Open Font License 1.1 (тексты лицензий рядом со шрифтами). Программа
 подключает их только для себя, в Windows они не устанавливаются.
+
+## Нейросети распознавания
+
+Скачиваются по желанию, в установщик не входят:
+
+- **Распознавание-нейросеть** (настройка «Распознавание текста → Нейросеть»):
+  модели PaddleOCR (© Baidu / PaddlePaddle Authors) в формате ONNX из проекта
+  RapidOCR, лицензия Apache-2.0. Берутся с ModelScope (`RapidAI/RapidOCR`,
+  версия 3.10.0): поиск текста PP-OCRv6 small, чтение — PP-OCRv6 small
+  (китайский, японский), korean_PP-OCRv5 mobile, en_PP-OCRv5 mobile.
+  Код движка — `crates/ocr`.
+- **Вертикальный японский**: manga-ocr (kha-white/manga-ocr-base, Apache-2.0)
+  в формате ONNX (`mayocream/manga-ocr-onnx`).

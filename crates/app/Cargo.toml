@@ -26,10 +26,13 @@ tracing-appender = "0.2"
 [features]
 # Vertical / handwritten Japanese through manga-ocr (ONNX Runtime, linked
 # statically; MSVC build). The release build turns it on.
-vertical-ja = ["dep:manga-ocr-rs", "dep:image", "dep:ort"]
+vertical-ja = ["dep:manga-ocr-rs", "dep:image", "dep:ort", "neural-ocr"]
+# Text found and read by PaddleOCR models (ONNX Runtime, linked in).
+neural-ocr = ["dep:manga-neural-ocr", "manga-neural-ocr/download"]
 
 [target.'cfg(windows)'.dependencies]
 manga-ocr-rs = { version = "1", optional = true }
+manga-neural-ocr = { path = "../ocr", optional = true }
 # manga-ocr-rs 1.0 is written for this ONNX Runtime binding (later rc changed the API).
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "download-binaries", "tls-rustls"], optional = true }
 image = { version = "0.25", default-features = false, optional = true }

@@ -145,6 +145,9 @@ pub struct Interface {
     /// Sound effects on the artwork: "translate" (briefly, apart from the
     /// dialogue) or "keep" (left as drawn).
     pub sfx: String,
+    /// Text recognition: "windows" (built in) or "neural" (PaddleOCR models,
+    /// downloaded on demand; reads titles, outlined and slanted text).
+    pub ocr_engine: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,7 +315,7 @@ impl Default for Dialogue {
 
 impl Default for Interface {
     fn default() -> Self {
-        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true, page_context: true, vertical_ja: false, sfx: "translate".into() }
+        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true, page_context: true, vertical_ja: false, sfx: "translate".into(), ocr_engine: "windows".into() }
     }
 }
 
