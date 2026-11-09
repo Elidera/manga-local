@@ -64,11 +64,14 @@ def main(out):
     for i, (x, base, text) in enumerate([(60, (230, 140, 140), ["THE BIRDS,", "INSECTS,"]), (370, (150, 200, 120), ["THE", "ANIMALS."]),
                                          (680, (120, 160, 230), ["...FOR THE", "FRUITS."])]):
         art(d, (x, 120, x + 260, 760), 10 + i, base)
+        # Captions stand on smooth colour (as in real pages), not over lines.
+        d.rectangle((x + 60, 160, x + 250, 240), fill=base)
         y = 170
         for t in text:
             d.text((x + 70, y), t, font=cap, fill=(15, 15, 15))
             y += 32
     art(d, (60, 800, 940, 1340), 20, (210, 220, 200))
+    d.rectangle((340, 990, 640, 1100), fill=(210, 220, 200))
     d.text((360, 1000), "I'M", font=cap, fill=(15, 15, 15))
     d.text((360, 1032), "THANKFUL FOR ALL", font=cap, fill=(15, 15, 15))
     d.text((360, 1064), "LIFE IN THIS WORLD.", font=cap, fill=(15, 15, 15))
