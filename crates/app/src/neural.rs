@@ -3,7 +3,8 @@
 //! line, slanted text — where Windows OCR misses them. Chosen in the settings
 //! («Распознавание текста»); the model files (~30–45 MB per language) are
 //! downloaded on demand into `%LOCALAPPDATA%\MangaLocal\models\paddle` from
-//! ModelScope (RapidOCR's ONNX exports, Apache-2.0).
+//! this project's GitHub release, ModelScope second (RapidOCR's ONNX exports,
+//! Apache-2.0).
 
 use crate::state::Shared;
 use manga_core::lang::Lang;
@@ -12,6 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// Copies of the same files (the release «ocr-models-v1» of this repository):
+/// GitHub opens where ModelScope does not.
+const MIRROR: &str = "https://github.com/Elidera/manga-local/releases/download/ocr-models-v1";
 const BASE: &str = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx";
 
 /// (file, path under BASE, exact size in bytes).
@@ -80,7 +84,13 @@ pub async fn download(shared: Arc<Shared>, lang: Lang) -> anyhow::Result<()> {
     let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(20)).build()?;
     let todo: Vec<Model> = files(lang).into_iter().filter(|(f, _, size)| !std::fs::metadata(dir.join(f)).is_ok_and(|m| m.len() == *size)).collect();
     for (i, (file, path, size)) in todo.iter().enumerate() {
-        let resp = client.get(format!("{BASE}/{path}")).send().await?.error_for_status()?;
+        let resp = match client.get(format!("{MIRROR}/{file}")).send().await.and_then(|r| r.error_for_status()) {
+            Ok(r) => r,
+            Err(first) => {
+                tracing::warn!("{file}: GitHub не ответил ({first}), пробую ModelScope");
+                client.get(format!("{BASE}/{path}")).send().await?.error_for_status()?
+            }
+        };
         let part = dir.join(format!("{file}.part"));
         let mut out = tokio::fs::File::create(&part).await?;
         let (mut got, mut shown) = (0u64, 0u64);

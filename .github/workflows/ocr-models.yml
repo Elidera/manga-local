@@ -1,13 +1,13 @@
-# Checks that the neural OCR models (PaddleOCR via RapidOCR, Apache-2.0) can be
-# downloaded from where Manga Local takes them, and prints what is inside
-# (inputs, embedded alphabets). Nothing is published.
+# Publishes the neural OCR models (PaddleOCR via RapidOCR, Apache-2.0) as the
+# release «ocr-models-v1» of this repository: Manga Local downloads them from
+# there (GitHub opens everywhere), ModelScope stays the second address.
 name: ocr-models
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -40,10 +40,30 @@ jobs:
               print(f, meta)
           PY
           sha256sum out/*.onnx
-      - name: Mirrors
+      - name: Check sizes (the program checks them too)
         run: |
-          for u in https://huggingface.co/RapidAI/RapidOCR/resolve/main/onnx/PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx \
-                   https://huggingface.co/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/korean_PP-OCRv5_rec_mobile.onnx \
-                   https://huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/korean_PP-OCRv4_rec_infer.onnx; do
-            echo "$(curl -s -o /dev/null -L -w '%{http_code} %{size_download}' -r 0-0 "$u") $u"
-          done
+          set -e
+          check() { test "$(stat -c %s "out/$1")" = "$2" || { echo "$1: size $(stat -c %s "out/$1"), expected $2"; exit 1; }; }
+          check PP-OCRv6_det_small.onnx 9929594
+          check PP-OCRv6_rec_small.onnx 21234383
+          check korean_PP-OCRv5_rec_mobile.onnx 13488748
+          check en_PP-OCRv5_rec_mobile.onnx 7872351
+      - name: Publish release ocr-models-v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          cat > notes.md <<'MD'
+          Модели распознавания текста для Manga Local (настройка «Распознавание текста → Нейросеть»).
+          Программа скачивает их сама, вручную ничего делать не нужно.
+
+          PaddleOCR (© Baidu / PaddlePaddle Authors), ONNX-версии из проекта RapidOCR
+          (ModelScope `RapidAI/RapidOCR`, v3.10.0). Лицензия Apache-2.0, файлы не изменены.
+          MD
+          files="out/PP-OCRv6_det_small.onnx out/PP-OCRv6_rec_small.onnx out/korean_PP-OCRv5_rec_mobile.onnx out/en_PP-OCRv5_rec_mobile.onnx"
+          [ -s out/MODEL_LICENSES.md ] && files="$files out/MODEL_LICENSES.md"
+          if gh release view ocr-models-v1 >/dev/null 2>&1; then
+            gh release upload ocr-models-v1 $files --clobber
+          else
+            gh release create ocr-models-v1 $files --title "Модели распознавания текста (PaddleOCR)" --notes-file notes.md --latest=false
+          fi
