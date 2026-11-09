@@ -78,7 +78,7 @@ pub async fn analyse(frame: &Frame, lang: Lang, ocr: &Ocr, tr: &Translator, ja: 
     let speech = Vec::new(); // the subtitle mode is gone
     let up = crate::interface::upscale_for(0, frame.height as i32);
     let label_lines = if up == 1 { lines } else { ocr.recognize(frame.clone(), up, lang).await? };
-    let bubbles = crate::interface::page_items(&label_lines, lang, tr, frame, ja).await.into_iter().map(|b| b.src).collect();
+    let bubbles = crate::interface::page_items(&label_lines, lang, tr, frame, ocr, ja).await.into_iter().map(|b| b.src).collect();
     let mut labels: Vec<String> = Vec::new();
     for l in label_lines {
         if crate::interface::is_label_line(&l.text, lang, tr) {
