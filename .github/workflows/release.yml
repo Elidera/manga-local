@@ -122,12 +122,17 @@ jobs:
             installer/Output/*.exe
             MangaLocal-portable-x64.zip
 
-      - name: Keep only the 5 newest builds
+      - name: Keep only the 5 newest builds and runs
         if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           $ids = gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100&name=manga-local-windows" --jq '.artifacts | sort_by(.created_at) | reverse | .[5:] | .[].id'
           foreach ($id in $ids) { if ($id) { gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$id"; Write-Host "deleted artifact $id" } }
+          # Old runs of every workflow too (with their reports): the 5 newest finished ones stay.
+          foreach ($wf in 'release.yml','quality.yml','ocr-models.yml') {
+            $runs = gh api "repos/${{ github.repository }}/actions/workflows/$wf/runs?status=completed&per_page=100" --jq '.workflow_runs | sort_by(.created_at) | reverse | .[5:] | .[].id'
+            foreach ($id in $runs) { if ($id) { gh api -X DELETE "repos/${{ github.repository }}/actions/runs/$id" | Out-Null; Write-Host "deleted run $id ($wf)" } }
+          }
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
