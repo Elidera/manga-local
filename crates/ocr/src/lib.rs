@@ -28,9 +28,27 @@ pub struct Line {
     pub score: f32,
 }
 
-fn load(path: &Path, threads: usize) -> Result<Session> {
+/// Built with the video card path (DirectML, Windows)?
+pub fn gpu_compiled() -> bool {
+    cfg!(feature = "gpu")
+}
+
+/// `gpu`: run on the video card through DirectML when the build has it; a
+/// card or driver that cannot leaves the work to the processor by itself.
+fn load(path: &Path, threads: usize, gpu: bool) -> Result<Session> {
     let b = Session::builder().map_err(|e| anyhow!("{e}"))?;
     let mut b = b.with_intra_threads(threads.max(1)).map_err(|e| anyhow!("{e}"))?;
+    #[cfg(feature = "gpu")]
+    if gpu {
+        // DirectML needs these two off.
+        b = b.with_memory_pattern(false).map_err(|e| anyhow!("{e}"))?;
+        b = b.with_parallel_execution(false).map_err(|e| anyhow!("{e}"))?;
+        b = b
+            .with_execution_providers([ort::ep::DirectML::default().with_performance_preference(ort::ep::directml::PerformancePreference::HighPerformance).build()])
+            .map_err(|e| anyhow!("{e}"))?;
+    }
+    #[cfg(not(feature = "gpu"))]
+    let _ = gpu;
     b.commit_from_file(path).map_err(|e| anyhow!("{}: {e}", path.display()))
 }
 
@@ -40,8 +58,8 @@ pub struct Detector {
 }
 
 impl Detector {
-    pub fn load(path: &Path, threads: usize) -> Result<Self> {
-        Ok(Self { session: Mutex::new(load(path, threads)?) })
+    pub fn load(path: &Path, threads: usize, gpu: bool) -> Result<Self> {
+        Ok(Self { session: Mutex::new(load(path, threads, gpu)?) })
     }
 
     /// Text line boxes in frame coordinates with their probability.
@@ -69,19 +87,20 @@ impl Detector {
 pub struct Recognizer {
     session: Mutex<Session>,
     chars: Vec<String>,
+    gpu: bool,
 }
 
 const REC_H: usize = 48;
 
 impl Recognizer {
-    pub fn load(path: &Path, threads: usize) -> Result<Self> {
-        let session = load(path, threads)?;
+    pub fn load(path: &Path, threads: usize, gpu: bool) -> Result<Self> {
+        let session = load(path, threads, gpu)?;
         let embedded = session
             .metadata()
             .map_err(|e| anyhow!("{e}"))?
             .custom("character")
             .with_context(|| format!("{}: в модели нет алфавита", path.display()))?;
-        Ok(Self { session: Mutex::new(session), chars: ctc::alphabet(&embedded) })
+        Ok(Self { session: Mutex::new(session), chars: ctc::alphabet(&embedded), gpu })
     }
 
     /// Read each box of `f`: (text, probability), in the order of `boxes`.
@@ -97,16 +116,22 @@ impl Recognizer {
         order.sort_by(|&a, &b| ratio(&boxes[a]).1.total_cmp(&ratio(&boxes[b]).1));
         for chunk in order.chunks(8) {
             let max_ratio = chunk.iter().map(|&i| ratio(&boxes[i]).1).fold(320.0 / 48.0, f32::max).min(40.0);
-            let width = (REC_H as f32 * max_ratio).ceil() as usize;
+            let mut width = (REC_H as f32 * max_ratio).ceil() as usize;
+            // The video card prepares itself for every new input size: a few
+            // sizes only (width in steps of 4 heights, always 8 rows).
+            let rows = if self.gpu { 8 } else { chunk.len() };
+            if self.gpu {
+                width = width.div_ceil(REC_H * 4) * REC_H * 4;
+            }
             let per = 3 * REC_H * width;
-            let mut data = vec![0f32; chunk.len() * per];
+            let mut data = vec![0f32; rows * per];
             for (k, &i) in chunk.iter().enumerate() {
                 let r = &boxes[i];
                 let (rot, q) = ratio(r);
                 let rw = ((REC_H as f32 * q).ceil() as usize).clamp(1, width);
                 prep::write_region(f, r.x, r.y, r.w, r.h, rw, REC_H, width, rot, &mut data[k * per..(k + 1) * per]);
             }
-            let input = Tensor::from_array(([chunk.len(), 3, REC_H, width], data)).map_err(|e| anyhow!("{e}"))?;
+            let input = Tensor::from_array(([rows, 3, REC_H, width], data)).map_err(|e| anyhow!("{e}"))?;
             let mut s = self.session.lock().unwrap();
             let res = s.run(ort::inputs![input]).map_err(|e| anyhow!("чтение текста: {e}"))?;
             let (shape, logits) = res[0].try_extract_tensor::<f32>().map_err(|e| anyhow!("{e}"))?;
@@ -160,8 +185,10 @@ fn stack_columns(mut rects: Vec<Rect>) -> Vec<Rect> {
 }
 
 impl Engine {
-    pub fn load(det: &Path, rec: &Path, threads: usize) -> Result<Self> {
-        Ok(Self { det: Detector::load(det, threads)?, rec: Recognizer::load(rec, threads)? })
+    /// `gpu`: on the video card when the build has it (see `gpu_compiled`).
+    pub fn load(det: &Path, rec: &Path, threads: usize, gpu: bool) -> Result<Self> {
+        let gpu = gpu && gpu_compiled();
+        Ok(Self { det: Detector::load(det, threads, gpu)?, rec: Recognizer::load(rec, threads, gpu)? })
     }
 
     /// All lines of the page read with at least `min_score`.

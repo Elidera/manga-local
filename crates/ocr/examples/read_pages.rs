@@ -5,7 +5,7 @@ fn main() -> anyhow::Result<()> {
     let a: Vec<String> = std::env::args().collect();
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let t = std::time::Instant::now();
-    let engine = neural_ocr::Engine::load(a[1].as_ref(), a[2].as_ref(), threads)?;
+    let engine = neural_ocr::Engine::load(a[1].as_ref(), a[2].as_ref(), threads, false)?;
     println!("загрузка {} мс", t.elapsed().as_millis());
     for p in &a[3..] {
         let f = manga_pages::chapter::decode(&std::fs::read(p)?).map_err(anyhow::Error::msg)?;

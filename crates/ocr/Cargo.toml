@@ -17,6 +17,9 @@ ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "
 [features]
 # Windows release: ONNX Runtime linked in (downloaded at build time).
 download = ["ort/download-binaries", "ort/tls-rustls"]
+# Windows: the video card through DirectML (already inside ONNX Runtime's
+# Windows build; a card that cannot leaves the work to the processor).
+gpu = ["ort/directml"]
 # Tests and tools: ONNX Runtime loaded at run time (ORT_DYLIB_PATH).
 dynamic = ["ort/load-dynamic"]
 

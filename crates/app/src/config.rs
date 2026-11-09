@@ -150,6 +150,8 @@ pub struct Interface {
     pub ocr_engine: String,
     /// Keep every translated page for the developer (see `journal.rs`).
     pub journal: bool,
+    /// The neural OCR on the video card (DirectML); off = the processor.
+    pub ocr_gpu: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,7 +319,7 @@ impl Default for Dialogue {
 
 impl Default for Interface {
     fn default() -> Self {
-        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true, page_context: true, vertical_ja: false, sfx: "translate".into(), ocr_engine: "neural".into(), journal: false }
+        Self { mode: "replace".into(), upscale: 0, font_scale: 0.82, max_lines: 120, auto_hide: true, hover_original: true, page_context: true, vertical_ja: false, sfx: "translate".into(), ocr_engine: "neural".into(), journal: false, ocr_gpu: true }
     }
 }
 

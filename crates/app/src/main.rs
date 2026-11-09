@@ -155,6 +155,7 @@ mod app {
         crate::neural::init(crate::neural::model_dir(&shared));
         crate::neural::set_on(cfg.interface.ocr_engine == "neural");
         crate::journal::set_on(cfg.interface.journal);
+        crate::neural::set_gpu(cfg.interface.ocr_gpu);
 
         // Hotkeys.
         let problems = hotkeys::spawn(&cfg.hotkeys, cmd_tx.clone());
@@ -476,6 +477,7 @@ mod app {
                 Command::SaveConfig => {
                     crate::neural::set_on(shared.cfg().interface.ocr_engine == "neural");
                     crate::journal::set_on(shared.cfg().interface.journal);
+                    crate::neural::set_gpu(shared.cfg().interface.ocr_gpu);
                     shared.save_config();
                 }
                 Command::DownloadNeural => {

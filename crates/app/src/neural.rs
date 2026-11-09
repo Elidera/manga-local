@@ -46,6 +46,23 @@ pub fn available() -> bool {
 
 static DIR: OnceLock<PathBuf> = OnceLock::new();
 static ON: AtomicBool = AtomicBool::new(false);
+/// On the video card (setting «Распознавание на видеокарте»).
+static GPU: AtomicBool = AtomicBool::new(true);
+
+/// Follow the setting «Распознавание на видеокарте»: the models load again.
+pub fn set_gpu(on: bool) {
+    if GPU.swap(on, Ordering::Relaxed) != on {
+        *CACHE.lock().unwrap() = None;
+    }
+}
+
+/// The build can run the recognition on the video card.
+pub fn gpu_available() -> bool {
+    #[cfg(feature = "neural-ocr")]
+    return neural_ocr::gpu_compiled();
+    #[cfg(not(feature = "neural-ocr"))]
+    false
+}
 
 pub fn model_dir(shared: &Shared) -> PathBuf {
     shared.paths.data.join("models").join("paddle")
@@ -145,7 +162,11 @@ pub fn engine(lang: Lang) -> Option<Arc<Engine>> {
     map.clear();
     match load(dir, lang) {
         Ok(e) => {
-            tracing::info!("распознавание-нейросеть: загружено для языка «{}»", lang.name_ru());
+            tracing::info!(
+                "распознавание-нейросеть: загружено для языка «{}» ({})",
+                lang.name_ru(),
+                if GPU.load(Ordering::Relaxed) && gpu_available() { "видеокарта, если подходит" } else { "процессор" }
+            );
             let e = Arc::new(e);
             map.insert(key, e.clone());
             Some(e)
@@ -161,7 +182,7 @@ pub fn engine(lang: Lang) -> Option<Arc<Engine>> {
 fn load(dir: &Path, lang: Lang) -> anyhow::Result<Engine> {
     // Half the cores: the translation model and the browser need the rest.
     let threads = std::thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(2, 8);
-    neural_ocr::Engine::load(&dir.join(DET.0), &dir.join(rec_for(lang).0), threads)
+    neural_ocr::Engine::load(&dir.join(DET.0), &dir.join(rec_for(lang).0), threads, GPU.load(Ordering::Relaxed))
 }
 
 #[cfg(not(feature = "neural-ocr"))]

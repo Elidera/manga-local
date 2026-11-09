@@ -28,7 +28,7 @@ tracing-appender = "0.2"
 # statically; MSVC build). The release build turns it on.
 vertical-ja = ["dep:manga-ocr-rs", "dep:image", "dep:ort", "neural-ocr"]
 # Text found and read by PaddleOCR models (ONNX Runtime, linked in).
-neural-ocr = ["dep:manga-neural-ocr", "manga-neural-ocr/download"]
+neural-ocr = ["dep:manga-neural-ocr", "manga-neural-ocr/download", "manga-neural-ocr/gpu"]
 
 [target.'cfg(windows)'.dependencies]
 manga-ocr-rs = { version = "1", optional = true }
