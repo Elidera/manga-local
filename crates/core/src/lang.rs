@@ -275,6 +275,32 @@ pub fn script_ratio(s: &str, lang: Lang) -> f32 {
     own as f32 / counted.len() as f32
 }
 
+/// The language a page is really in, when it is clearly not the chosen one.
+/// The Korean, Japanese and Chinese recognizers read Latin letters too, so an
+/// English page read with them comes out as English words with hardly a letter
+/// of the chosen script. None: looks like the chosen language, or unclear.
+pub fn other_page_language(lines: &[&str], chosen: Lang) -> Option<Lang> {
+    if chosen == Lang::En {
+        return None;
+    }
+    let own: usize = lines
+        .iter()
+        .map(|l| match chosen {
+            Lang::Ko => text::hangul_count(l),
+            Lang::Ja => text::kana_count(l) + text::han_count(l),
+            _ => text::han_count(l),
+        })
+        .sum();
+    let latin: usize = lines.iter().map(|l| latin_count(l)).sum();
+    // Lines of real words (three or more of two letters and longer), not a
+    // stray «OK» or a number.
+    let wordy = lines
+        .iter()
+        .filter(|l| l.split(|c: char| !is_latin_letter(c) && c != '\'').filter(|w| w.chars().filter(|&c| is_latin_letter(c)).count() >= 2).count() >= 3)
+        .count();
+    (latin >= 40 && own * 10 < latin && wordy >= 2).then_some(Lang::En)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +400,17 @@ mod tests {
         assert!(is_label("YOU'RE LATE AGAIN.", Lang::En));
         assert!(is_label("JIHO?!", Lang::En));
         assert!(!is_label("XP", Lang::En));
+    }
+
+    #[test]
+    fn english_page_read_as_korean() {
+        let page = ["I DON'T KNOW WHAT", "YOU'RE TALKING ABOUT.", "WAIT FOR ME AT", "THE STATION, OKAY?"];
+        assert_eq!(other_page_language(&page, Lang::Ko), Some(Lang::En));
+        assert_eq!(other_page_language(&page, Lang::En), None);
+        // A Korean page with an English word or two stays Korean.
+        let ko = ["오늘은 내가 살게!", "OK", "정말? 고마워, 형!", "어디로 갈까? NEW YORK?"];
+        assert_eq!(other_page_language(&ko, Lang::Ko), None);
+        // Too little to tell.
+        assert_eq!(other_page_language(&["Next chapter"], Lang::Ja), None);
     }
 }

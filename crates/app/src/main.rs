@@ -228,6 +228,7 @@ mod app {
         };
         let sh2 = shared.clone();
         let res = eframe::run_native("manga-local", options, Box::new(move |cc| Ok(Box::new(ui::MangaApp::new(cc, sh2)))));
+        shared.save_config();
         crate::tray::remove();
         tracing::info!("выход");
         rt.shutdown_timeout(std::time::Duration::from_secs(2));
@@ -360,6 +361,9 @@ mod app {
                 }
                 Command::Quit => {
                     tracing::info!("выход по команде пользователя");
+                    // Settings changed in the last moment (the panel saves them
+                    // with a short delay) must not be lost.
+                    shared.save_config();
                     crate::tray::remove();
                     if let Some(ctx) = shared.egui.get() {
                         ctx.send_viewport_cmd_to(eframe::egui::ViewportId::ROOT, eframe::egui::ViewportCommand::Close);

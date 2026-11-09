@@ -512,6 +512,31 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
         )
     };
 
+    // The page looked like another language than the chosen one.
+    let lang_offer = shared.ui.lock().unwrap().lang_offer;
+    let mut switched = false;
+    if let Some((chosen, seen)) = lang_offer {
+        card(ui, "Другой язык на странице?", |ui| {
+            hint(ui, &format!("Похоже, на странице {} текст, а выбран {}.", seen.name_ru(), chosen.name_ru()));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let go = egui::Button::new(RichText::new(format!("Переключить на {}", seen.name_ru())).color(on_accent())).fill(accent()).rounding(Rounding::same(10.0));
+                if ui.add(go).clicked() {
+                    shared.cfg.write().unwrap().general.source_lang = seen.code().into();
+                    shared.ui(|u| u.lang_offer = None);
+                    switched = true;
+                }
+                if ui.button("Нет, оставить").clicked() {
+                    shared.ui(|u| {
+                        u.lang_offer = None;
+                        u.lang_declined.push((chosen, seen));
+                    });
+                }
+            });
+        });
+        ui.add_space(8.0);
+    }
+
     // Checklist until everything is ready.
     let model_ok = server.as_ref().map(|s| s.is_ready());
     let ocr_ok = ocr_status.as_ref().map(|r| r.is_ok());
@@ -694,7 +719,7 @@ fn page_home(ui: &mut Ui, shared: &Arc<Shared>) -> bool {
             }
         });
     }
-    false
+    switched
 }
 
 fn stat(ui: &mut Ui, value: &str, label: &str) {

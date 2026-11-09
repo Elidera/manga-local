@@ -128,7 +128,7 @@ pub struct Dialogue {
 pub struct Interface {
     /// "replace", "backdrop" or "list"
     pub mode: String,
-    /// 0 = auto (2× below 1440p).
+    /// 0 = auto (2× below 4K).
     pub upscale: u32,
     pub font_scale: f32,
     pub max_lines: usize,

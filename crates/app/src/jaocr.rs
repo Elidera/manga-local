@@ -87,21 +87,18 @@ impl JaOcr {
         anyhow::bail!("эта сборка без распознавания вертикального японского")
     }
 
-    pub fn read(&self, frame: &Frame, r: &Rect) -> Option<String> {
+    /// The piece of the page manga-ocr looks at for a block (with a margin).
+    pub fn crop(frame: &Frame, r: &Rect) -> Option<Frame> {
         let pad = 6.0;
         let x = (r.x - pad).max(0.0) as u32;
         let y = (r.y - pad).max(0.0) as u32;
         let w = ((r.w + 2.0 * pad) as u32).min(frame.width.saturating_sub(x));
         let h = ((r.h + 2.0 * pad) as u32).min(frame.height.saturating_sub(y));
-        if w < 8 || h < 8 {
-            return None;
-        }
-        let crop = frame.crop(x, y, w, h);
-        self.read_crop(&crop)
+        (w >= 8 && h >= 8).then(|| frame.crop(x, y, w, h))
     }
 
     #[cfg(feature = "vertical-ja")]
-    fn read_crop(&self, crop: &Frame) -> Option<String> {
+    pub fn read_crop(&self, crop: &Frame) -> Option<String> {
         let mut rgba = crop.bgra.clone();
         for p in rgba.chunks_exact_mut(4) {
             p.swap(0, 2);
@@ -121,7 +118,7 @@ impl JaOcr {
     }
 
     #[cfg(not(feature = "vertical-ja"))]
-    fn read_crop(&self, _crop: &Frame) -> Option<String> {
+    pub fn read_crop(&self, _crop: &Frame) -> Option<String> {
         None
     }
 }

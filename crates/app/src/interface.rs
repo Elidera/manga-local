@@ -45,10 +45,12 @@ fn coarse_diff(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f32>() / a.len() as f32
 }
 
-/// OCR upscale for F8: small fonts below 1440p read much better at 2×.
+/// OCR upscale for F8: small fonts (and the thin lettering drawn over
+/// artwork) read much better at 2×. Windows OCR takes ~0.2 s a page, so 2× is
+/// used up to 4K; only a 4K picture is big enough as it is.
 pub fn upscale_for(configured: u32, screen_h: i32) -> u32 {
     match configured {
-        0 if screen_h < 1440 => 2,
+        0 if screen_h < 2000 => 2,
         0 => 1,
         k => k,
     }
@@ -61,14 +63,15 @@ pub fn is_label_line(text: &str, lang: manga_core::lang::Lang, tr: &Translator) 
 
 /// Group the OCR lines of a page into bubbles, in reading order. Each bubble
 /// keeps its text joined the way the language is written, its box (`frame`
-/// coordinates) and the colour around it. Shared with `--selftest`.
-pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) -> Vec<InterfaceItem> {
+/// coordinates) and the colour around it. `found`: the bubble outlines of the
+/// page (`manga_core::bubbles::find`, looked for once per page). Not ordered.
+fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found: &[manga_core::bubbles::Found]) -> Vec<InterfaceItem> {
     let kept: Vec<&OcrLine> = lines.iter().filter(|l| is_label_line(&l.text, lang, tr)).collect();
     let rects: Vec<Rect> = kept.iter().map(|l| l.rect).collect();
     // Lines inside one bubble outline are one bubble, whatever the spacing.
-    let outlines: Vec<Rect> = manga_core::bubbles::find(frame).into_iter().map(|f| f.outer).collect();
+    let outlines: Vec<Rect> = found.iter().map(|f| f.outer).collect();
     let groups = layout::group_in_outlines(&rects, &outlines);
-    let items: Vec<InterfaceItem> = groups
+    groups
         .iter()
         .map(|g| {
             let rect = layout::block_rect(&rects, g);
@@ -99,9 +102,7 @@ pub fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame) ->
             InterfaceItem { fg, busy, bg, rect, src, dst: None, line_h, lines: g.len(), patch: patch.map(Arc::new), sfx }
         })
         .filter(|it| !it.src.is_empty())
-        .collect();
-    let order = page_order(&items, frame, lang == Lang::Ja);
-    order.into_iter().map(|i| items[i].clone()).collect()
+        .collect()
 }
 
 /// Reading-mode session: 0 = off. A new F8 session ends the previous one.
@@ -135,10 +136,12 @@ pub fn split_unique(items: &[InterfaceItem], tr: &Translator, model: &str, done:
 /// Reading order of a page's bubbles: panel by panel (found by the gutters
 /// between them; manga right to left), inside a panel row by row. A page with
 /// no gutters keeps the plain row order.
-fn page_order(items: &[InterfaceItem], frame: &Frame, rtl: bool) -> Vec<usize> {
+fn page_order(items: Vec<InterfaceItem>, frame: &Frame, rtl: bool) -> Vec<InterfaceItem> {
     let rects: Vec<Rect> = items.iter().map(|it| it.rect).collect();
     let panels = manga_core::panels::find(frame, rtl);
-    manga_core::panels::reading_order(&rects, &panels, rtl)
+    let order = manga_core::panels::reading_order(&rects, &panels, rtl);
+    let mut slots: Vec<Option<InterfaceItem>> = items.into_iter().map(Some).collect();
+    order.into_iter().filter_map(|i| slots[i].take()).collect()
 }
 
 /// The bubbles of a page: from Windows OCR lines (`bubbles`), and — for
@@ -146,9 +149,12 @@ fn page_order(items: &[InterfaceItem], frame: &Frame, rtl: bool) -> Vec<usize> {
 /// OCR could not read (vertical columns, handwriting) read by manga-ocr. Frame
 /// coordinates, reading order. Shared with chapter files and `--selftest`.
 pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Vec<InterfaceItem> {
-    let mut items = bubbles(lines, lang, tr, frame);
-    let Some(ja) = ja.filter(|_| lang == Lang::Ja) else { return items };
+    // The bubble outlines and the panels are looked for once per page (on a
+    // long strip each pass takes time and memory).
     let found = manga_core::bubbles::find(frame);
+    let rtl = lang == Lang::Ja;
+    let mut items = bubbles(lines, lang, tr, frame, &found);
+    let Some(ja) = ja.filter(|_| lang == Lang::Ja) else { return page_order(items, frame, rtl) };
     let inside = |r: &manga_core::image::Rect, o: &manga_core::image::Rect| {
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h
@@ -164,11 +170,12 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
     // Horizontal bubbles Windows OCR has read stay its own (faster, as good).
     let todo: Vec<manga_core::bubbles::Found> = found.into_iter().filter(|f| f.vertical || !items.iter().any(|it| inside(&it.rect, &f.outer))).collect();
     if todo.is_empty() {
-        return items;
+        return page_order(items, frame, rtl);
     }
     let t0 = Instant::now();
-    let f2 = frame.clone();
-    let read: Vec<(manga_core::bubbles::Found, String)> = tokio::task::spawn_blocking(move || todo.into_iter().filter_map(|f| ja.read(&f2, &f.text).map(|t| (f, t))).collect()).await.unwrap_or_default();
+    // Only the bubbles' pieces go to the reader, not a copy of the whole page.
+    let crops: Vec<(manga_core::bubbles::Found, Frame)> = todo.into_iter().filter_map(|f| crate::jaocr::JaOcr::crop(frame, &f.text).map(|c| (f, c))).collect();
+    let read: Vec<(manga_core::bubbles::Found, String)> = tokio::task::spawn_blocking(move || crops.into_iter().filter_map(|(f, c)| ja.read_crop(&c).map(|t| (f, t))).collect()).await.unwrap_or_default();
     tracing::info!(target: "interface", "manga-ocr: {} пузырей за {} мс", read.len(), t0.elapsed().as_millis());
     for (f, text) in read {
         items.retain(|it| !inside(&it.rect, &f.outer));
@@ -183,8 +190,7 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
         let patch = manga_core::clean::clean_text(frame, &f.text, f.char_px, f.paper, true);
         items.push(InterfaceItem { fg: contrast_text(f.paper), busy: false, bg: f.paper, rect, src, dst: None, line_h: f.char_px, lines: f.lines.max(2), patch: patch.map(Arc::new), sfx: false });
     }
-    let order = page_order(&items, frame, true);
-    order.into_iter().map(|i| items[i].clone()).collect()
+    page_order(items, frame, rtl)
 }
 
 pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
@@ -307,9 +313,12 @@ struct Page {
 async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, session: u64, follow: bool, first: bool) -> Option<Page> {
     let gen = shared.interface_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let cfg = shared.cfg();
-    tr.ensure_title(&cfg.general.profile, &cfg.general.game_title);
+    if tr.ensure_title(&cfg.general.profile, &cfg.general.game_title) {
+        shared.ui(|u| u.name_offers.clear());
+    }
     // The reader's own picture when it is in front (no taskbar or other windows).
     let full: PxRect = capture::game_area(&cfg);
+    crate::hotkeys::watch_foreground();
     // Wait until two pictures 250 ms apart match (at most ~1.5 s): a page that
     // is still loading or sliding gives half-drawn bubbles.
     let mut frame = match capture::capture_clean(shared, full) {
@@ -354,6 +363,16 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     }
     let ocr_ms = t0.elapsed().as_millis();
     let n_lines = lines.len();
+    // An English page while Korean is chosen (and the like): offer to switch.
+    let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+    if let Some(seen) = manga_core::lang::other_page_language(&texts, lang) {
+        if shared.ui(|u| u.offer_language(lang, seen)) {
+            crate::tray::balloon(
+                &format!("На странице {} текст?", seen.name_ru()),
+                &format!("Выбран {}. Откройте панель ({}) и нажмите «Переключить».", lang.name_ru(), cfg.hotkeys.panel),
+            );
+        }
+    }
     let ja = crate::jaocr::engine(shared).await;
     let items: Vec<InterfaceItem> = page_items(&lines, lang, tr, &frame, ja)
         .await

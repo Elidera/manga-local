@@ -61,7 +61,8 @@ impl LlmClient {
         }
         let url = format!("{}/v1/chat/completions", self.base);
         let post = || {
-            let r = self.http.post(&url).json(&body);
+            // Our server's password; an external server without one ignores it.
+            let r = self.http.post(&url).bearer_auth(crate::llm::server::api_key()).json(&body);
             match timeout {
                 Some(t) => r.timeout(t),
                 None => r,

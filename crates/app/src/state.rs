@@ -209,6 +209,10 @@ pub struct UiState {
     pub ja_ocr_status: Option<String>,
     /// Character names noticed in translations, offered for the title's dictionary.
     pub name_offers: Vec<(String, String)>,
+    /// The page looks like another language than the chosen one: (chosen, seen),
+    /// offered in the panel. `lang_declined`: pairs the reader said no to.
+    pub lang_offer: Option<(manga_core::lang::Lang, manga_core::lang::Lang)>,
+    pub lang_declined: Vec<(manga_core::lang::Lang, manga_core::lang::Lang)>,
     pub ocr_debug: Option<OcrDebug>,
     /// Windows OCR availability (None = not checked yet).
     pub ocr_status: Option<Result<(), String>>,
@@ -221,6 +225,17 @@ pub struct UiState {
 }
 
 impl UiState {
+    /// Offer to switch the language of the text (once for each pair). True
+    /// when this is a new offer.
+    pub fn offer_language(&mut self, chosen: manga_core::lang::Lang, seen: manga_core::lang::Lang) -> bool {
+        if self.lang_offer == Some((chosen, seen)) || self.lang_declined.contains(&(chosen, seen)) {
+            return false;
+        }
+        self.lang_offer = Some((chosen, seen));
+        self.notice(format!("На странице, похоже, {} текст, а выбран {}. Переключить можно на главной странице панели", seen.name_ru(), chosen.name_ru()));
+        true
+    }
+
     /// Offer character names noticed in translations (once each).
     pub fn offer_names(&mut self, pairs: Vec<(String, String)>) {
         for (src, dst) in pairs {

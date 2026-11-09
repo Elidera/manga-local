@@ -195,14 +195,18 @@ impl Translator {
 
     /// Load the dictionary of `title` if another title was loaded so far
     /// (called before each page: the title can be typed in at any moment).
-    pub fn ensure_title(&self, profile: &str, title: &str) {
+    /// True when the title changed: the names noticed so far belonged to the
+    /// old one and are forgotten.
+    pub fn ensure_title(&self, profile: &str, title: &str) -> bool {
         let title = title.trim();
         if *self.title.lock().unwrap() == title {
-            return;
+            return false;
         }
         *self.title.lock().unwrap() = title.to_string();
+        *self.names.lock().unwrap() = manga_core::names::NameWatch::new();
         let (n, _) = self.reload_dictionaries(profile);
         tracing::info!("тайтл «{title}»: словарей загружено, терминов {n}");
+        true
     }
 
     /// Open (creating it with a short help) the dictionary file of `title`.

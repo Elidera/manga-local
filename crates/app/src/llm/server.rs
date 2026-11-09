@@ -65,6 +65,27 @@ pub fn parse_gen_speed(line: &str) -> Option<f32> {
     num.parse().ok()
 }
 
+/// A password for our own llama-server, new on every start of the program.
+/// The server listens on 127.0.0.1 and answers any web page (it allows all
+/// origins), so without it a site open in the browser could use the model.
+pub fn api_key() -> &'static str {
+    static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| {
+        use std::hash::{BuildHasher, Hasher};
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        (0..2u64)
+            .map(|i| {
+                // RandomState is seeded from the system's random source.
+                let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+                h.write_u64(i);
+                h.write_u128(now);
+                h.write_u32(std::process::id());
+                format!("{:016x}", h.finish())
+            })
+            .collect()
+    })
+}
+
 /// Spawn llama-server for `preset` (does not wait for readiness).
 pub fn spawn(paths: &Paths, cfg: &Config, preset: &ModelPreset) -> Result<Started> {
     let exe = paths.resolve(&cfg.llm.server_exe);
@@ -75,6 +96,7 @@ pub fn spawn(paths: &Paths, cfg: &Config, preset: &ModelPreset) -> Result<Starte
     cmd.current_dir(exe.parent().unwrap_or(Path::new(".")));
     cmd.env("LLAMA_CACHE", paths.models());
     cmd.args(["--host", "127.0.0.1", "--port", &cfg.llm.port.to_string()]);
+    cmd.args(["--api-key", api_key()]);
     let local = (!preset.path.is_empty()).then(|| PathBuf::from(&preset.path)).filter(|p| p.exists());
     match (&local, preset.hf.is_empty()) {
         (Some(p), _) => {
@@ -98,7 +120,7 @@ pub fn spawn(paths: &Paths, cfg: &Config, preset: &ModelPreset) -> Result<Starte
     cmd.creation_flags(flags);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.kill_on_drop(true);
-    tracing::info!("запуск llama-server: {:?}", cmd.as_std());
+    tracing::info!("запуск llama-server: {}", format!("{:?}", cmd.as_std()).replace(api_key(), "***"));
     let mut child = cmd.spawn().with_context(|| format!("не удалось запустить {}", exe.display()))?;
     if let Some(h) = child.raw_handle() {
         if let Err(e) = crate::win::kill_with_parent(h) {

@@ -73,7 +73,9 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
     let cfg = shared.cfg();
     let lang = cfg.source_lang();
     ocr.check(lang).await.map_err(|e| e.to_string())?;
-    tr.ensure_title(&cfg.general.profile, &cfg.general.game_title);
+    if tr.ensure_title(&cfg.general.profile, &cfg.general.game_title) {
+        shared.ui(|u| u.name_offers.clear());
+    }
     let letterer = Letterer::new(std::fs::read(font_file(shared)).map_err(|e| format!("шрифт: {e}"))?)?;
     let out_path = ch.output_path();
     let mut out = Output::create(&out_path, ch.is_archive())?;
@@ -205,8 +207,9 @@ async fn prepare(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, lang: ma
 /// OCR of a whole page; tall webtoon strips in overlapping pieces of normal
 /// page height (each line is taken from the piece where it is not cut).
 async fn recognize(ocr: &Ocr, frame: &manga_core::image::Frame, lang: manga_core::lang::Lang) -> Result<Vec<OcrLine>, String> {
-    // Small text of narrow manhwa pages (720–1000 px wide) reads better at 2×.
-    let up = if frame.width < 1300 { 2 } else { 1 };
+    // Small text (and lettering over artwork) reads better at 2×; only very
+    // large scans are big enough as they are.
+    let up = if frame.width < 2000 { 2 } else { 1 };
     let pieces = slice::pieces(frame.height, 2400, 400);
     let mut all = Vec::new();
     for (i, &(y0, y1)) in pieces.iter().enumerate() {

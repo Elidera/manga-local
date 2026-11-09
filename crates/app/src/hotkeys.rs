@@ -6,7 +6,7 @@ use crate::config::Hotkeys;
 use crate::state::Command;
 use crate::win::parse_hotkey;
 use tokio::sync::mpsc::UnboundedSender;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -15,12 +15,20 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, HOT_KEY_MODIFIERS, MOD_NOREPEAT, VK_DOWN, VK_END, VK_HOME, VK_NEXT, VK_PRIOR, VK_SPACE, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_HOTKEY,
+    CallNextHookEx, GetForegroundWindow, GetMessageW, SetWindowsHookExW, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_HOTKEY,
     WM_KEYDOWN, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
 };
 
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 static LAST_SCROLL: AtomicU64 = AtomicU64::new(0);
+/// The window whose page is translated: scrolling keys count only there
+/// (Space typed in a chat elsewhere must not hide the translation). 0 = any.
+static PAGE_WINDOW: AtomicIsize = AtomicIsize::new(0);
+
+/// Remember the window in front as the one being read.
+pub fn watch_foreground() {
+    PAGE_WINDOW.store(crate::win::foreground_other().unwrap_or(0), Ordering::Relaxed);
+}
 
 /// Milliseconds on the app's own clock (for comparing with `last_scroll_ms`).
 pub fn now_ms() -> u64 {
@@ -44,7 +52,9 @@ unsafe extern "system" fn mouse_hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT
 unsafe extern "system" fn key_hook(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0 && w.0 as u32 == WM_KEYDOWN {
         let k = (*(l.0 as *const KBDLLHOOKSTRUCT)).vkCode as u16;
-        if [VK_NEXT, VK_PRIOR, VK_SPACE, VK_UP, VK_DOWN, VK_HOME, VK_END].iter().any(|v| v.0 == k) {
+        let page = PAGE_WINDOW.load(Ordering::Relaxed);
+        let here = page == 0 || GetForegroundWindow().0 as isize == page;
+        if here && [VK_NEXT, VK_PRIOR, VK_SPACE, VK_UP, VK_DOWN, VK_HOME, VK_END].iter().any(|v| v.0 == k) {
             LAST_SCROLL.store(now_ms(), Ordering::Relaxed);
         }
     }

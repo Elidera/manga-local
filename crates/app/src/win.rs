@@ -73,6 +73,20 @@ pub fn local_date_time() -> (String, String) {
     (format!("{:04}-{:02}-{:02}", t.wYear, t.wMonth, t.wDay), format!("{:02}:{:02}:{:02}", t.wHour, t.wMinute, t.wSecond))
 }
 
+/// The foreground window, unless it is one of ours (then None).
+pub fn foreground_other() -> Option<isize> {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    unsafe {
+        let h = GetForegroundWindow();
+        if h.0.is_null() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        (pid != std::process::id()).then_some(h.0 as isize)
+    }
+}
+
 /// Client area (the picture, without frame and title) of the foreground window
 /// in screen pixels, clipped to the primary screen.
 pub fn foreground_client_rect() -> Option<(i32, i32, i32, i32)> {
