@@ -9,7 +9,7 @@ on:
       models:
         description: "Models to test (comma separated ids: gemma4-e2b, gemma4-e4b, hymt2-1.8b, hymt2-7b, qwen3.5-2b, qwen3.5-4b, or hf:<repo>:<quant>)"
         required: false
-        default: "hymt2-1.8b"
+        default: "gemma4-e2b"
       langs:
         description: "Source languages to test (comma separated): ko, ja, zh, en"
         required: false
@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 240
     env:
       GH_TOKEN: ${{ github.token }}
-      MODELS: ${{ github.event.inputs.models || 'hymt2-1.8b' }}
+      MODELS: ${{ github.event.inputs.models || 'gemma4-e2b' }}
       LANGS: ${{ github.event.inputs.langs || 'ko,ja' }}
       LLAMA_CACHE: ${{ github.workspace }}/models
     steps:
