@@ -76,6 +76,61 @@ impl Frame {
         }
     }
 
+    /// The column pieces the page itself takes, without the blank site margins
+    /// around a narrow webtoon strip (a browser shows it in the middle of a wide
+    /// screen; some sites show two side by side): (x, width) each. Columns of
+    /// the background colour are margins; pure black is ignored (our own
+    /// drawings are blanked to it). Content closer than 8 % of the width is one
+    /// piece; pieces narrower than 48 px (a scrollbar) are dropped. The whole
+    /// width when the margins are narrow.
+    pub fn content_columns(&self) -> Vec<(u32, u32)> {
+        let full = vec![(0, self.width)];
+        let (w, h) = (self.width as usize, self.height as usize);
+        if w < 64 || h < 16 {
+            return full;
+        }
+        let lum = |x: usize, y: usize| {
+            let i = (y * w + x) * 4;
+            let p = &self.bgra[i..i + 3];
+            (p != [0, 0, 0]).then(|| luma(p[0], p[1], p[2]))
+        };
+        // The background: the commonest luminance of the two side columns.
+        let mut hist = [0u32; 256];
+        for y in 0..h {
+            for x in [0, w - 1] {
+                if let Some(v) = lum(x, y) {
+                    hist[v as usize] += 1;
+                }
+            }
+        }
+        let bg = hist.iter().enumerate().max_by_key(|(_, n)| **n).map(|(v, _)| v as i32).unwrap_or(255);
+        let need = (h / 400).max(3);
+        let inked: Vec<bool> = (0..w).map(|x| (0..h).step_by(2).filter(|&y| lum(x, y).is_some_and(|v| (v as i32 - bg).abs() > 24)).count() * 2 >= need).collect();
+        let gap = w * 8 / 100;
+        let mut pieces: Vec<(usize, usize)> = Vec::new();
+        for (x, _) in inked.iter().enumerate().filter(|(_, i)| **i) {
+            match pieces.last_mut() {
+                Some((_, b)) if x - *b <= gap => *b = x,
+                _ => pieces.push((x, x)),
+            }
+        }
+        let pad = 8;
+        let out: Vec<(u32, u32)> = pieces
+            .into_iter()
+            .filter(|(a, b)| b - a + 1 >= 48)
+            .map(|(a, b)| {
+                let (x0, x1) = (a.saturating_sub(pad), (b + 1 + pad).min(w));
+                (x0 as u32, (x1 - x0) as u32)
+            })
+            .collect();
+        let covered: u32 = out.iter().map(|p| p.1).sum();
+        // Not worth cutting for narrow margins (or nothing drawn at all).
+        if out.is_empty() || covered * 10 > self.width * 9 {
+            return full;
+        }
+        out
+    }
+
     pub fn crop(&self, x: u32, y: u32, w: u32, h: u32) -> Frame {
         let x = x.min(self.width);
         let y = y.min(self.height);
@@ -303,5 +358,42 @@ mod tests {
         let (c, sd) = f.ring_stats(&text, 4.0);
         assert_eq!(c, [255, 255, 255]);
         assert!(sd < 1.0, "no ring pixel differs from the paper");
+    }
+
+    #[test]
+    fn webtoon_strip_in_the_middle_of_a_wide_screen() {
+        // White screen 1000×400, a strip 200 px wide at x 400, a scrollbar at the
+        // right edge, our black badge in the bottom-right margin.
+        let (w, h) = (1000u32, 400u32);
+        let mut f = Frame::new(w, h, vec![255; (w * h * 4) as usize]);
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                let strip = (400..600).contains(&x) && (x + y) % 7 < 3;
+                let scrollbar = x >= 990 && y < 60;
+                if strip || scrollbar {
+                    f.bgra[i..i + 3].copy_from_slice(&[90, 90, 90]);
+                }
+            }
+        }
+        f.mask(800, 360, 150, 30);
+        let cols = f.content_columns();
+        assert_eq!(cols.len(), 1, "{cols:?}");
+        let (x, cw) = cols[0];
+        assert!((380..=400).contains(&x) && x + cw >= 600 && x + cw <= 620, "{x} {cw}");
+        // Two strips side by side: both kept.
+        let mut two = f.clone();
+        for y in 0..h {
+            for x in 100..250 {
+                let i = ((y * w + x) * 4) as usize;
+                if (x + y) % 5 < 2 {
+                    two.bgra[i..i + 3].copy_from_slice(&[60, 60, 60]);
+                }
+            }
+        }
+        assert_eq!(two.content_columns().len(), 2, "{:?}", two.content_columns());
+        // A full page: no cut.
+        let full = Frame::new(200, 100, vec![120; 200 * 100 * 4]);
+        assert_eq!(full.content_columns(), vec![(0, 200)]);
     }
 }

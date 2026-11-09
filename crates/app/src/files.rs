@@ -197,7 +197,7 @@ async fn prepare(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, lang: ma
     };
     let lines = recognize(ocr, &frame, lang).await?;
     let ja = crate::jaocr::engine(shared).await;
-    let mut items = interface::page_items(&lines, lang, tr, &frame, ocr, ja).await;
+    let mut items = interface::page_items(&lines, lang, tr, &frame, ocr, manga_core::bubbles::find(&frame), ja).await;
     if keep_sfx {
         items.retain(|it| !it.sfx);
     }

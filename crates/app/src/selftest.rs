@@ -72,13 +72,13 @@ pub fn save_png(frame: &Frame, path: &Path) -> Result<()> {
 /// Run the real pipeline on one picture: the bubbles F8 would translate (and,
 /// for the old subtitle mode, its speech blocks). Returns (found, OCR time in ms).
 pub async fn analyse(frame: &Frame, lang: Lang, ocr: &Ocr, tr: &Translator, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Result<(Found, u128)> {
-    let t0 = Instant::now();
-    let lines = ocr.recognize(frame.clone(), 1, lang).await?;
-    let ms = t0.elapsed().as_millis();
     let speech = Vec::new(); // the subtitle mode is gone
-    let up = crate::interface::upscale_for(0, frame.height as i32);
-    let label_lines = if up == 1 { lines } else { ocr.recognize(frame.clone(), up, lang).await? };
-    let bubbles = crate::interface::page_items(&label_lines, lang, tr, frame, ocr, ja).await.into_iter().map(|b| b.src).collect();
+    // As F8 does it: the page's bubbles, then the text piece by piece.
+    let t0 = Instant::now();
+    let found = manga_core::bubbles::find(frame);
+    let label_lines = crate::interface::read_screen(ocr, frame, 0, lang, &found).await?;
+    let ms = t0.elapsed().as_millis();
+    let bubbles = crate::interface::page_items(&label_lines, lang, tr, frame, ocr, found, ja).await.into_iter().map(|b| b.src).collect();
     let mut labels: Vec<String> = Vec::new();
     for l in label_lines {
         if crate::interface::is_label_line(&l.text, lang, tr) {

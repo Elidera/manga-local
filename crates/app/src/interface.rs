@@ -148,10 +148,10 @@ fn page_order(items: Vec<InterfaceItem>, frame: &Frame, rtl: bool) -> Vec<Interf
 /// Japanese with manga-ocr — bubbles found by the picture whose text Windows
 /// OCR could not read (vertical columns, handwriting) read by manga-ocr. Frame
 /// coordinates, reading order. Shared with chapter files and `--selftest`.
-pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ocr: &Ocr, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Vec<InterfaceItem> {
-    // The bubble outlines and the panels are looked for once per page (on a
-    // long strip each pass takes time and memory).
-    let found = manga_core::bubbles::find(frame);
+/// `found`: the page's bubbles (`manga_core::bubbles::find`), looked for once
+/// per page (on a long strip each pass takes time and memory).
+#[allow(clippy::too_many_arguments)]
+pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ocr: &Ocr, found: Vec<manga_core::bubbles::Found>, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Vec<InterfaceItem> {
     let rtl = lang == Lang::Ja;
     let extra = reread_empty(lines, lang, tr, frame, ocr, &found).await;
     let all: Vec<OcrLine>;
@@ -199,6 +199,48 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
         items.push(InterfaceItem { fg: contrast_text(f.paper), busy: false, bg: f.paper, rect, src, dst: None, line_h: f.char_px, lines: f.lines.max(2), patch: patch.map(Arc::new), sfx: false });
     }
     page_order(items, frame, rtl)
+}
+
+/// Recognize a screen picture: each piece of the page on its own (the blank
+/// site margins around a webtoon strip left out), enlarged so the letters of
+/// its bubbles come out about 40 px high (a strip shown narrow on a wide
+/// screen has letters of 10 px). `found`: the page's bubbles.
+pub async fn read_screen(ocr: &Ocr, frame: &Frame, configured: u32, lang: Lang, found: &[manga_core::bubbles::Found]) -> anyhow::Result<Vec<OcrLine>> {
+    let base = upscale_for(configured, frame.height as i32);
+    let mut out = Vec::new();
+    for (x, w) in frame.content_columns() {
+        let k = if configured != 0 { configured } else { letters_upscale(base, found, x as f32, w as f32) };
+        let whole = (x, w) == (0, frame.width);
+        let piece = if whole { frame.clone() } else { frame.crop(x, 0, w, frame.height) };
+        if !whole || k != base {
+            tracing::debug!(target: "interface", "распознаю полосу x {x}, ширина {w}, увеличение ×{k}");
+        }
+        for mut l in ocr.recognize(piece, k, lang).await? {
+            l.rect = l.rect.offset(x as f32, 0.0);
+            out.push(l);
+        }
+    }
+    Ok(out)
+}
+
+/// Upscale for a piece of the page: by the letter size of its bubbles (median),
+/// never less than `base`, at most 4×.
+fn letters_upscale(base: u32, found: &[manga_core::bubbles::Found], x: f32, w: f32) -> u32 {
+    let mut sizes: Vec<f32> = found
+        .iter()
+        .filter(|f| !f.vertical && f.char_px >= 5.0)
+        .filter(|f| {
+            let cx = f.outer.x + f.outer.w / 2.0;
+            cx >= x && cx < x + w
+        })
+        .map(|f| f.char_px)
+        .collect();
+    if sizes.is_empty() {
+        return base;
+    }
+    sizes.sort_by(|a, b| a.total_cmp(b));
+    let m = sizes[sizes.len() / 2];
+    ((40.0 / m).round() as u32).clamp(1, 4).max(base)
 }
 
 /// Bubbles found by the picture where Windows OCR read nothing: read once more,
@@ -407,11 +449,11 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     if !reading(session) {
         return None;
     }
-    let up = upscale_for(cfg.interface.upscale, full.h);
+    let found = manga_core::bubbles::find(&frame);
     shared.ui(|u| u.interface = Some(InterfaceView { items: vec![], pending: 1, generation: gen }));
     let t0 = Instant::now();
     let lang = cfg.source_lang();
-    let lines = match ocr.recognize(frame.clone(), up, lang).await {
+    let lines = match read_screen(ocr, &frame, cfg.interface.upscale, lang, &found).await {
         Ok(l) => l,
         Err(e) => {
             shared.ui(|u| {
@@ -437,7 +479,7 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
         }
     }
     let ja = crate::jaocr::engine(shared).await;
-    let items: Vec<InterfaceItem> = page_items(&lines, lang, tr, &frame, ocr, ja)
+    let items: Vec<InterfaceItem> = page_items(&lines, lang, tr, &frame, ocr, found, ja)
         .await
         .into_iter()
         .take(cfg.interface.max_lines)
