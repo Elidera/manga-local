@@ -384,8 +384,12 @@ impl Config {
             let active = cfg.llm.active_model.clone();
             cfg.models.retain(|m| !(m.id.starts_with("qwen3.5-") && m.id != active));
             for m in default_models() {
-                if !cfg.models.iter().any(|x| x.id == m.id) {
-                    cfg.models.push(m);
+                match cfg.models.iter_mut().find(|x| x.id == m.id) {
+                    // A built-in preset follows the program's version (names,
+                    // prompt kind, sampling); the downloaded file and a template
+                    // of the reader's own stay.
+                    Some(x) => *x = ModelPreset { path: std::mem::take(&mut x.path), template: std::mem::take(&mut x.template), ..m },
+                    None => cfg.models.push(m),
                 }
             }
         }

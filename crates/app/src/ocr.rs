@@ -107,9 +107,12 @@ impl Ocr {
         // lines itself at any size, so no upscale and no tiles.
         let frame = if crate::neural::active(lang) {
             let (frame_back, read) = tokio::task::spawn_blocking(move || {
-                let read = crate::neural::engine(lang)
-                    .ok_or_else(|| anyhow!("распознавание-нейросеть не загрузилось"))
-                    .and_then(|e| crate::neural::read(&e, &frame, lang));
+                let attempt = || crate::neural::engine(lang).ok_or_else(|| anyhow!("распознавание-нейросеть не загрузилось")).and_then(|e| crate::neural::read(&e, &frame, lang));
+                let mut read = attempt();
+                // The video card failed: once more on the processor.
+                if read.is_err() && crate::neural::leave_gpu() {
+                    read = attempt();
+                }
                 (frame, read)
             })
             .await

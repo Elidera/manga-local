@@ -762,6 +762,9 @@ async fn wait_for_model(shared: &Arc<Shared>, alive: &impl Fn() -> bool) -> bool
         if !alive() {
             return false;
         }
+        // Asked again each time: a page that came right as the model was
+        // being unloaded still wakes it.
+        crate::llm::server::touch();
         if !told {
             told = true;
             shared.ui(|u| u.notice("Нейросеть ещё загружается — перевод появится сам, как только она будет готова"));

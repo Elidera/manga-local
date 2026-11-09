@@ -50,7 +50,7 @@ impl LlmClient {
 
     /// `schema`: the answer must be JSON of this shape (llama-server turns it
     /// into a grammar the model cannot step out of).
-    pub async fn chat_full(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, schema: Option<&Value>, mut on_delta: impl FnMut(&str)) -> Result<String> {
+    pub async fn chat_full(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, schema: Option<&Value>, on_delta: impl FnMut(&str)) -> Result<String> {
         // An unloaded model starts loading; wait for it like for the first start.
         crate::llm::server::touch();
         if crate::llm::server::asleep() {
@@ -58,9 +58,18 @@ impl LlmClient {
                 if !crate::llm::server::asleep() && self.health().await.unwrap_or(false) {
                     break;
                 }
+                // Asked again: a use that came right as the model was unloading still wakes it.
+                crate::llm::server::touch();
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
         }
+        let r = self.stream_chat(messages, p, timeout, schema, on_delta).await;
+        // A long answer counts as use till its end.
+        crate::llm::server::touch();
+        r
+    }
+
+    async fn stream_chat(&self, messages: &[Message], p: &ModelPreset, timeout: Option<Duration>, schema: Option<&Value>, mut on_delta: impl FnMut(&str)) -> Result<String> {
         let msgs: Vec<Value> = messages.iter().map(|m| json!({"role": m.role, "content": m.content})).collect();
         let mut body = json!({
             "messages": msgs,

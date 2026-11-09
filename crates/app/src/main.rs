@@ -417,10 +417,15 @@ mod app {
                 },
                 Command::StopFiles => files::stop(),
                 Command::DownloadJaOcr => {
+                    static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        continue;
+                    }
                     let sh = shared.clone();
                     tokio::spawn(async move {
                         sh.ui(|u| u.ja_ocr_status = Some("Скачиваю распознавание японского…".into()));
                         let r = crate::jaocr::download(sh.clone()).await;
+                        BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
                         sh.ui(|u| match &r {
                             Ok(()) => {
                                 u.ja_ocr_status = None;
@@ -481,11 +486,17 @@ mod app {
                     shared.save_config();
                 }
                 Command::DownloadNeural => {
+                    // One download at a time (a second press would write the same files).
+                    static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        continue;
+                    }
                     let sh = shared.clone();
                     let lang = shared.cfg().source_lang();
                     tokio::spawn(async move {
                         sh.ui(|u| u.neural_status = Some("Скачиваю распознавание…".into()));
                         let r = crate::neural::download(sh.clone(), lang).await;
+                        BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
                         sh.ui(|u| match &r {
                             Ok(()) => {
                                 u.neural_status = None;

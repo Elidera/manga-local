@@ -28,8 +28,9 @@ pub const PORT: u16 = 47811;
 /// Pieces of tall pictures (webtoon strips), as in chapter files.
 const PIECE: u32 = 2400;
 const OVERLAP: u32 = 400;
-/// Pictures kept in memory, megapixels.
-const KEEP_MPX: u64 = 160;
+/// Pictures kept in memory, megapixels (4 bytes each: 60 Mpx ≈ 240 MB, a
+/// few long webtoon strips).
+const KEEP_MPX: u64 = 60;
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct Img {
@@ -164,7 +165,19 @@ async fn handle(mut s: tokio::net::TcpStream, shared: &Arc<Shared>, tr: &Arc<Tra
                 let ahead: &[Img] = if crate::interface::reading_on() { &view.ahead } else { &[] };
                 view.images.iter().chain(ahead.iter()).filter(|i| !st.images.iter().any(|(id, _)| id == &i.id)).map(|i| i.id.clone()).collect()
             };
-            STATE.lock().unwrap().view = Some((crate::hotkeys::now_ms(), view));
+            {
+                let mut st = STATE.lock().unwrap();
+                // Not reading: only the pictures on screen stay in memory (the
+                // extension describes the page every few seconds and sends them again).
+                if !crate::interface::reading_on() {
+                    let shown: HashSet<&str> = view.images.iter().map(|i| i.id.as_str()).collect();
+                    st.images.retain(|(id, _)| shown.contains(id.as_str()));
+                    let left: HashSet<String> = st.images.iter().map(|(id, _)| id.clone()).collect();
+                    st.lines.retain(|(id, _, _), _| left.contains(id));
+                    st.ahead_done.retain(|(id, _)| left.contains(id));
+                }
+                st.view = Some((crate::hotkeys::now_ms(), view));
+            }
             reply(&mut s, "200 OK", &serde_json::json!({ "want": want }).to_string()).await
         }
         ("POST", "/image") => {

@@ -179,6 +179,17 @@ pub fn engine(lang: Lang) -> Option<Arc<Engine>> {
     }
 }
 
+/// Reading on the video card failed (a driver that breaks mid-way): the
+/// processor from now on. False when it was not on the video card.
+pub fn leave_gpu() -> bool {
+    if CHOSEN.compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed).is_err() {
+        return false;
+    }
+    *CACHE.lock().unwrap() = None;
+    tracing::warn!("распознавание на видеокарте дало сбой — дальше на процессоре");
+    true
+}
+
 /// What the speed test chose: 0 not yet, 1 video card, 2 processor.
 static CHOSEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 

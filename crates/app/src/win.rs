@@ -421,19 +421,26 @@ pub fn listen_show_panel(on_signal: impl Fn() + Send + 'static) {
 /// Put a child process into a job that kills it when we exit (even on crash),
 /// so llama-server never stays behind holding gigabytes of RAM.
 pub fn kill_with_parent(process: *mut std::ffi::c_void) -> anyhow::Result<()> {
+    // One job for the whole run (the model is started again after every
+    // pause); its handle closes only when our process ends.
+    static JOB: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
     unsafe {
-        let job = CreateJobObjectW(None, PCWSTR::null())?;
-        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const std::ffi::c_void,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        )?;
+        let job = match JOB.get() {
+            Some(&j) => HANDLE(j as *mut _),
+            None => {
+                let job = CreateJobObjectW(None, PCWSTR::null())?;
+                let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )?;
+                HANDLE(*JOB.get_or_init(|| job.0 as isize) as *mut _)
+            }
+        };
         AssignProcessToJobObject(job, HANDLE(process))?;
-        // Intentionally leak the job handle: it closes when our process ends.
-        std::mem::forget(job);
         Ok(())
     }
 }

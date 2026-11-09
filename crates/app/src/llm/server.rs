@@ -349,12 +349,20 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
                     // Unused for a while: the memory goes back to the computer
                     // until the next translation asks for the model.
                     tracing::info!("переводчик не используется {} мин — выгружаю из памяти", shared.cfg().llm.unload_after_min);
+                    let slept_at = crate::hotkeys::now_ms();
                     ASLEEP.store(true, std::sync::atomic::Ordering::Relaxed);
                     let _ = st.child.kill().await;
                     set(ServerStatus::Stopped);
-                    tokio::select! {
-                        _ = WAKE.notified() => {}
-                        cmd = rx.recv() => if cmd.is_none() { return; },
+                    // Woken only by a use after this moment: a wake-up left over
+                    // from the last sleep would load the model again at once.
+                    loop {
+                        tokio::select! {
+                            _ = WAKE.notified() => {}
+                            cmd = rx.recv() => { if cmd.is_none() { return; } break; }
+                        }
+                        if LAST_USE.load(std::sync::atomic::Ordering::Relaxed) >= slept_at {
+                            break;
+                        }
                     }
                     ASLEEP.store(false, std::sync::atomic::Ordering::Relaxed);
                     tracing::info!("переводчик нужен снова — загружаю");
@@ -371,6 +379,13 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
 async fn check_speed(shared: Arc<Shared>, exe: PathBuf) {
     use std::sync::atomic::Ordering;
     let vulkan = exe.parent().is_some_and(|d| d.join("ggml-vulkan.dll").exists());
+    // The model loads again after every pause: its devices and speed are
+    // looked at once per model in a run.
+    static PROBED: Mutex<String> = Mutex::new(String::new());
+    let model = shared.cfg().llm.active_model.clone();
+    if std::mem::replace(&mut *PROBED.lock().unwrap(), model.clone()) == model {
+        return;
+    }
     tracing::info!("движок нейросети: {}", if vulkan { "с поддержкой видеокарты (Vulkan)" } else { "только процессор" });
     // Which devices the engine itself sees (a slow translation on a strong
     // card is explained here: no Vulkan device, or the built-in graphics first).

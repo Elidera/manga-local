@@ -283,8 +283,6 @@ impl Translator {
         self.fixes.lock().unwrap().should_skip(s)
     }
 
-    /// One spelling per speaker name, whatever OCR read this time.
-
     fn fix_ru(&self, s: &str) -> String {
         self.fixes.lock().unwrap().apply_ru(s)
     }
@@ -374,7 +372,6 @@ impl Translator {
         tracing::info!("исправление: {src} → {dst}");
     }
 
-    /// Instant answer without the model, if any.
     /// Remember how a bubble is said and how much fits into it.
     pub fn note_hint(&self, src: &str, h: manga_core::tone::Hint) {
         let mut m = self.tones.lock().unwrap();
@@ -402,6 +399,7 @@ impl Translator {
         manga_core::tone::keep(src, &dst, self.tone(src))
     }
 
+    /// Instant answer without the model, if any.
     pub fn lookup(&self, model_id: &str, src: &str, kind: TextKind) -> Option<String> {
         if let Some(c) = self.corrections.lock().unwrap().get(&[src]) {
             return Some(c.to_string());
@@ -597,12 +595,22 @@ impl Translator {
         }
         let got = self.translate_batch_as_is(preset, game, &joined, kind, context).await?;
         let mut out = vec![None; items.len()];
+        let mut lines = String::new();
         for (g, t) in groups.iter().zip(got) {
             let Some(t) = t else { continue };
             let parts: Vec<&str> = g.iter().map(|&i| refs[i]).collect();
-            for (&i, piece) in g.iter().zip(manga_core::tone::split_phrase(&t, &parts)) {
+            let pieces = manga_core::tone::split_phrase(&t, &parts);
+            let whole = g.len() > 1 && pieces.iter().all(|p| !p.is_empty());
+            for (&i, piece) in g.iter().zip(pieces) {
+                // Each bubble remembered on its own: the page comes back from the cache.
+                if whole {
+                    lines.push_str(&self.cache.lock().unwrap().insert(&[&preset.id, kind_tag(kind), refs[i]], &piece));
+                }
                 out[i] = (!piece.is_empty()).then_some(piece);
             }
+        }
+        if !lines.is_empty() {
+            append(&self.paths.cache(), &lines);
         }
         Ok(out)
     }

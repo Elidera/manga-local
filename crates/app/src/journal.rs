@@ -206,6 +206,10 @@ fn flags(e: &Entry, translate_ms: u128, left: bool) -> Vec<String> {
 fn write(shared: &Shared, e: Entry, left: bool) -> anyhow::Result<()> {
     let dir = session_dir(shared)?;
     let n = PAGES.fetch_add(1, Ordering::SeqCst) + 1;
+    // A long session: older ones leave while the journal is over its limit.
+    if n % 50 == 0 {
+        prune(&self::dir(shared), dir);
+    }
     let translate_ms = e.started.elapsed().as_millis();
     let flags = flags(&e, translate_ms, left);
     let jpg = manga_pages::chapter::encode(&e.frame, true).map_err(anyhow::Error::msg)?;
@@ -267,8 +271,22 @@ fn prune(root: &Path, keep: &Path) {
     }
 }
 
-/// How many pages the journal holds and its size in MB (for the panel).
+/// How many pages the journal holds and its size in MB (for the panel; the
+/// panel asks every frame, the disk is looked at every few seconds).
 pub fn summary(shared: &Shared) -> (usize, u64) {
+    static LAST: Mutex<Option<(Instant, (usize, u64))>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    if let Some((at, v)) = *last {
+        if at.elapsed().as_secs() < 3 {
+            return v;
+        }
+    }
+    let v = count(shared);
+    *last = Some((Instant::now(), v));
+    v
+}
+
+fn count(shared: &Shared) -> (usize, u64) {
     let root = dir(shared);
     let pages = std::fs::read_dir(&root)
         .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).map(|e| std::fs::read_dir(e.path()).map(|r| r.flatten().filter(|f| f.path().extension().is_some_and(|x| x == "jpg")).count()).unwrap_or(0)).sum())

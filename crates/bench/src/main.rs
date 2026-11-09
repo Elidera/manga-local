@@ -180,21 +180,37 @@ fn run_batch(a: &Args, lines: &[&str], g: &Glossary, agent: &ureq::Agent) {
         }
         let ctx: Vec<(&str, &str)> = if a.context { prev.iter().map(|(s, t)| (s.as_str(), t.as_str())).collect() } else { Vec::new() };
         // The intonation as the app finds it (no letter sizes here).
-        let hints: Vec<manga_core::tone::Hint> = chunk.iter().map(|l| manga_core::tone::Hint { tone: manga_core::tone::detect(l, 0.0), room: 0 }).collect();
-        let msgs = prompt::build_batch(style, chunk, &terms, &a.game, TextKind::Dialogue, &ctx, &hints);
-        let mut page: Vec<(String, String)> = Vec::new();
-        let need: usize = chunk.iter().map(|s| s.chars().count() * 3 + 24).sum();
         let json = prompt::batch_is_json(style);
-        let tokens = (need as u32 + 64).clamp(128, 3072) + if json { chunk.len() as u32 * 12 } else { 0 };
-        let parts = chat_schema(agent, a, &msgs, tokens, json.then(|| prompt::batch_schema(chunk.len())))
+        // As the app does: a model that reads only the text (Hy-MT) gets a
+        // phrase split over bubbles as one, cut back into them afterwards.
+        let groups: Vec<Vec<usize>> = if json { (0..chunk.len()).map(|i| vec![i]).collect() } else { manga_core::tone::phrase_groups(chunk) };
+        let send: Vec<String> = groups.iter().map(|g| manga_core::tone::join_phrase(&g.iter().map(|&i| chunk[i]).collect::<Vec<_>>())).collect();
+        let send_refs: Vec<&str> = send.iter().map(String::as_str).collect();
+        let hints: Vec<manga_core::tone::Hint> = send_refs.iter().map(|l| manga_core::tone::Hint { tone: manga_core::tone::detect(l, 0.0), room: 0 }).collect();
+        let msgs = prompt::build_batch(style, &send_refs, &terms, &a.game, TextKind::Dialogue, &ctx, &hints);
+        let mut page: Vec<(String, String)> = Vec::new();
+        let need: usize = send.iter().map(|s| s.chars().count() * 3 + 24).sum();
+        let tokens = (need as u32 + 64).clamp(128, 3072) + if json { send.len() as u32 * 12 } else { 0 };
+        let sent = chat_schema(agent, a, &msgs, tokens, json.then(|| prompt::batch_schema(send.len())))
             .map(|raw| {
-                let p = prompt::parse_batch_any(&raw, chunk.len());
+                let p = prompt::parse_batch_any(&raw, send.len());
                 if p.iter().any(Option::is_none) {
                     eprintln!("batch partially parsed, raw: {raw}");
                 }
                 p
             })
-            .unwrap_or_else(|_| vec![None; chunk.len()]);
+            .unwrap_or_else(|_| vec![None; send.len()]);
+        let mut parts: Vec<Option<String>> = vec![None; chunk.len()];
+        for ((g, joined), got) in groups.iter().zip(&send).zip(sent) {
+            let Some(t) = got.and_then(|t| prompt::clean_output(&t, joined).ok()) else { continue };
+            if g.len() > 1 {
+                eprintln!("одна фраза в {} пузырях: {joined} → {t}", g.len());
+            }
+            let pieces = manga_core::tone::split_phrase(&t, &g.iter().map(|&i| chunk[i]).collect::<Vec<_>>());
+            for (&i, piece) in g.iter().zip(pieces) {
+                parts[i] = (!piece.is_empty()).then_some(piece);
+            }
+        }
         if parts.iter().all(Option::is_some) {
             batch_ok += 1;
         }

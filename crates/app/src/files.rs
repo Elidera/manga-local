@@ -150,20 +150,11 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
         progress("вписываю перевод");
         let bubbles: Vec<Bubble> = items
             .iter()
-            .map(|it| Bubble {
-                rect: it.rect,
-                line_h: it.line_h,
-                around: it.bg,
-                busy: it.busy,
-                translation: result.get(&it.src).cloned().unwrap_or_default(),
-            })
             // No translation (or the original back after a failure): the bubble is left as drawn.
-            .filter(|b| !b.translation.is_empty())
-            .collect::<Vec<_>>()
-            .into_iter()
-            .zip(items.iter())
-            .filter(|(b, it)| b.translation != it.src)
-            .map(|(b, _)| b)
+            .filter_map(|it| {
+                let t = result.get(&it.src).filter(|t| !t.is_empty() && **t != it.src)?;
+                Some(Bubble { rect: it.rect, line_h: it.line_h, around: it.bg, busy: it.busy, translation: t.clone() })
+            })
             .collect();
         manga_pages::render(&mut frame, &bubbles, &letterer, cfg.interface.font_scale);
         let encoded = chapter::encode(&frame, jpeg)?;
