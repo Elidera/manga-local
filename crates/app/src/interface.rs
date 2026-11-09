@@ -140,8 +140,7 @@ fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found:
             let sfx = !in_bubble && busy && manga_core::lang::is_sfx_like(&src, lang);
             // One or two small letters alone outside every bubble («름», «4수»):
             // bits of the drawing or of the site, not a phrase. Big ones are sounds.
-            let letters = src.chars().filter(|c| c.is_alphanumeric()).count();
-            let fragment = !in_bubble && g.len() == 1 && letters <= 2 && !src.contains(['!', '?', '！', '？']) && line_h < frame.height as f32 * 0.035;
+            let fragment = !in_bubble && g.len() == 1 && manga_core::lang::is_loose_fragment(&src, lang, line_h, frame.height as f32);
             if fragment {
                 tracing::debug!(target: "interface", "обрывок вне пузыря пропущен: «{src}»");
                 src.clear();
@@ -231,10 +230,7 @@ pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &
     // Outside every bubble Windows OCR often reads artwork as letters («も。〇き朝。»
     // from drawn circles): such lines stay only when they look like real text.
     items.retain(|it| {
-        found.iter().any(|f| inside(&it.rect, &f.outer)) || {
-            let japanese = it.src.chars().filter(|&c| manga_core::text::is_kana(c) || manga_core::text::is_han(c)).count();
-            japanese >= 4 && !it.src.contains(['〇', '○', '◯'])
-        }
+        found.iter().any(|f| inside(&it.rect, &f.outer)) || manga_core::lang::is_japanese_outside_text(&it.src)
     });
     // Horizontal bubbles Windows OCR has read stay its own (faster, as good).
     let todo: Vec<manga_core::bubbles::Found> = found.into_iter().filter(|f| f.vertical || !items.iter().any(|it| inside(&it.rect, &f.outer))).collect();
@@ -419,6 +415,11 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
     }
     let session = SESSIONS.fetch_add(1, Ordering::SeqCst) + 1;
     READING.store(session, Ordering::SeqCst);
+    if crate::bench::running() {
+        READING.store(0, Ordering::SeqCst);
+        shared.ui(|u| u.notice("Дождитесь окончания сравнения моделей"));
+        return;
+    }
     // The translation model loads (if it was unloaded) while the page is read.
     crate::llm::server::touch();
     shared.ui(|u| u.flash = Some(("Перевод включён".into(), Instant::now() + Duration::from_millis(1200))));
@@ -531,7 +532,8 @@ struct Page {
 async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, session: u64, follow: bool, first: bool) -> Option<Page> {
     let gen = shared.interface_gen.fetch_add(1, Ordering::SeqCst) + 1;
     let cfg = shared.cfg();
-    if tr.ensure_title(&cfg.general.profile, &cfg.general.game_title) {
+    if tr.ensure_title(&cfg.general.profile, &cfg.general.game_title, cfg.source_lang()) {
+        PAGE_CONTEXT.lock().unwrap().clear();
         shared.ui(|u| u.name_offers.clear());
     }
     // F8 pressed with the taskbar, our panel or another program in front: the

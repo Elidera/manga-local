@@ -19,6 +19,9 @@ permissions:
   contents: write
   actions: write # delete old build artifacts
 
+env:
+  MANGA_TEST_LABEL: ${{ github.head_ref == 'test/windows-01' && 'Test-01' || '' }}
+
 jobs:
   core-tests:
     runs-on: ubuntu-latest
@@ -26,6 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test -p manga-core -p manga-pages
+      - run: cargo test -p manga-local --tests
       # The OCR engine's own tests need no ONNX Runtime (loaded at run time when used).
       - run: cargo test -p manga-neural-ocr --features dynamic
 
@@ -63,6 +67,7 @@ jobs:
           # Build date (Moscow time) and commit, shown in the panel and the log.
           $msk = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date).ToUniversalTime(), 'Russian Standard Time')
           $env:MANGA_BUILD = "$($msk.ToString('dd.MM.yyyy HH:mm')) · $($env:GITHUB_SHA.Substring(0,7))"
+          if ($env:MANGA_TEST_LABEL) { $env:MANGA_BUILD = "Тест 01 · $env:MANGA_BUILD" }
           cargo build -p manga-local --release --features vertical-ja
 
       - name: Download llama.cpp (Vulkan + CPU)
@@ -106,22 +111,25 @@ jobs:
           Copy-Item dist/* portable/MangaLocal -Recurse -Exclude llama-vulkan,llama-cpu
           Copy-Item -Recurse dist/llama-vulkan portable/MangaLocal/llama
           "portable" | Out-File portable/MangaLocal/portable.txt
-          Compress-Archive portable/MangaLocal MangaLocal-portable-x64.zip
+          $zip = if ($env:MANGA_TEST_LABEL) { "MangaLocal-$env:MANGA_TEST_LABEL-portable-x64.zip" } else { 'MangaLocal-portable-x64.zip' }
+          Compress-Archive portable/MangaLocal $zip
 
       - name: Installer (Inno Setup)
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
           $ver = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" "/DDist=$PWD\dist" installer\manga-local.iss
+          $installerArgs = @("/DAppVersion=$ver", "/DDist=$PWD\dist")
+          if ($env:MANGA_TEST_LABEL) { $installerArgs += "/DBuildLabel=$env:MANGA_TEST_LABEL" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" @installerArgs installer\manga-local.iss
           Get-ChildItem installer/Output
 
       - uses: actions/upload-artifact@v4
         with:
-          name: manga-local-windows
+          name: ${{ env.MANGA_TEST_LABEL && format('MangaLocal-{0}-Windows-x64', env.MANGA_TEST_LABEL) || 'manga-local-windows' }}
           path: |
             installer/Output/*.exe
-            MangaLocal-portable-x64.zip
+            MangaLocal-*-x64.zip
 
       - name: Keep only the 5 newest builds and runs
         if: github.event_name != 'pull_request'
@@ -152,12 +160,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: manga-local-windows
+          name: ${{ env.MANGA_TEST_LABEL && format('MangaLocal-{0}-Windows-x64', env.MANGA_TEST_LABEL) || 'manga-local-windows' }}
           path: build
 
       - name: Unpack the portable build
         shell: pwsh
-        run: Expand-Archive build/MangaLocal-portable-x64.zip -DestinationPath app
+        run: Expand-Archive (Get-ChildItem build/MangaLocal-*-x64.zip | Select-Object -First 1).FullName -DestinationPath app
 
       - name: Windows OCR for Korean and Japanese
         shell: pwsh

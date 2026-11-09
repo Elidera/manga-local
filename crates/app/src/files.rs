@@ -44,6 +44,11 @@ pub async fn translate_chapter(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Oc
         shared.ui(|u| u.notice("Глава уже переводится — дождитесь или остановите"));
         return;
     }
+    if crate::bench::running() {
+        RUNNING.store(false, Ordering::SeqCst);
+        shared.ui(|u| u.notice("Дождитесь окончания сравнения моделей"));
+        return;
+    }
     STOP.store(false, Ordering::SeqCst);
     let r = run(&shared, &tr, &ocr, &path).await;
     RUNNING.store(false, Ordering::SeqCst);
@@ -78,7 +83,7 @@ async fn run(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, path: &Path)
     let cfg = shared.cfg();
     let lang = cfg.source_lang();
     ocr.check(lang).await.map_err(|e| e.to_string())?;
-    if tr.ensure_title(&cfg.general.profile, &cfg.general.game_title) {
+    if tr.ensure_title(&cfg.general.profile, &cfg.general.game_title, lang) {
         shared.ui(|u| u.name_offers.clear());
     }
     let letterer = Letterer::new(std::fs::read(font_file(shared)).map_err(|e| format!("шрифт: {e}"))?)?;

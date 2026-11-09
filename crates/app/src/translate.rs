@@ -7,10 +7,11 @@ use anyhow::{anyhow, Result};
 use std::io::Write;
 use std::sync::Mutex;
 use std::time::Instant;
-use manga_core::cache::Store;
+use manga_core::cache::{Scope, Store};
 use manga_core::fixes::Fixes;
 use manga_core::glossary::Glossary;
 use manga_core::history::History;
+use manga_core::lang::Lang;
 use manga_core::memory::FuzzyMemory;
 use manga_core::prompt::{self, PromptInput, PromptStyle, Reject, TextKind};
 
@@ -29,8 +30,8 @@ pub struct Translator {
     names: Mutex<manga_core::names::NameWatch>,
     /// Originals the reader said are not names.
     not_names: Mutex<std::collections::HashSet<String>>,
-    /// The title whose dictionary is loaded (see `ensure_title`).
-    title: Mutex<String>,
+    /// The reading whose dictionary and automatic translations are active.
+    scope: Mutex<Scope>,
     /// When the last dialogue line was translated: after a long silence the
     /// scene has changed and old lines are no longer useful context.
     last_dialogue: Mutex<Option<Instant>>,
@@ -176,7 +177,7 @@ impl Translator {
             corrections: Mutex::new(corrections),
             history: Mutex::new(History::new(context_lines)),
             fuzzy: Mutex::new(FuzzyMemory::new(400, 0.9)),
-            title: Mutex::new(String::new()),
+            scope: Mutex::new(Scope::new(profile, "", Lang::Ko)),
             names: Mutex::new(manga_core::names::NameWatch::new()),
             not_names: Mutex::new(not_names),
             last_dialogue: Mutex::new(None),
@@ -187,7 +188,7 @@ impl Translator {
 
     /// Re-read glossaries and fixes. Returns (terms, fix rules).
     pub fn reload_dictionaries(&self, profile: &str) -> (usize, usize) {
-        let title = self.title.lock().unwrap().clone();
+        let title = self.scope.lock().unwrap().title.clone();
         let g = load_glossary(&self.paths, profile, &title);
         let f = load_fixes(&self.paths);
         let n = (g.len(), f.len());
@@ -196,17 +197,17 @@ impl Translator {
         n
     }
 
-    /// Load the dictionary of `title` if another title was loaded so far
-    /// (called before each page: the title can be typed in at any moment).
-    /// True when the title changed: the names noticed so far belonged to the
-    /// old one and are forgotten.
-    pub fn ensure_title(&self, profile: &str, title: &str) -> bool {
-        let title = title.trim();
-        if *self.title.lock().unwrap() == title {
+    /// Select the reading before each page. A title, language or profile change
+    /// resets temporary dialogue memory; persisted translations keep their scope.
+    pub fn ensure_title(&self, profile: &str, title: &str, lang: Lang) -> bool {
+        let scope = Scope::new(profile, title, lang);
+        if *self.scope.lock().unwrap() == scope {
             return false;
         }
-        *self.title.lock().unwrap() = title.to_string();
+        *self.scope.lock().unwrap() = scope;
         *self.names.lock().unwrap() = manga_core::names::NameWatch::new();
+        self.clear_history();
+        self.tones.lock().unwrap().clear();
         let (n, _) = self.reload_dictionaries(profile);
         tracing::info!("тайтл «{title}»: словарей загружено, терминов {n}");
         true
@@ -293,15 +294,18 @@ impl Translator {
 
     pub fn clear_history(&self) {
         self.history.lock().unwrap().clear();
+        self.fuzzy.lock().unwrap().clear();
+        *self.last_dialogue.lock().unwrap() = None;
     }
 
     /// The user marked this dialogue translation bad: forget it (cache and the
     /// similar-line memory) so the next request asks the model again, and note
     /// it in `bad.tsv` (to look through or send to the developer).
     pub fn forget(&self, model_id: &str, src: &str, bad: &str) {
+        let scope = self.scope.lock().unwrap().clone();
         // A bubble or a sound effect: whichever of them was cached.
         for kind in [TextKind::Dialogue, TextKind::Interface] {
-            let line = self.cache.lock().unwrap().remove(&[model_id, kind_tag(kind), src]);
+            let line = self.cache.lock().unwrap().remove(&scope.key(model_id, kind_tag(kind), src));
             append(&self.paths.cache(), &line);
         }
         self.fuzzy.lock().unwrap().forget(src);
@@ -401,6 +405,11 @@ impl Translator {
 
     /// Instant answer without the model, if any.
     pub fn lookup(&self, model_id: &str, src: &str, kind: TextKind) -> Option<String> {
+        let scope = self.scope.lock().unwrap().clone();
+        self.lookup_scoped(&scope, model_id, src, kind)
+    }
+
+    fn lookup_scoped(&self, scope: &Scope, model_id: &str, src: &str, kind: TextKind) -> Option<String> {
         if let Some(c) = self.corrections.lock().unwrap().get(&[src]) {
             return Some(c.to_string());
         }
@@ -410,7 +419,7 @@ impl Translator {
                 return Some(self.fix_ru(&t));
             }
         }
-        let hit = self.cache.lock().unwrap().get(&[model_id, kind_tag(kind), src]).map(str::to_string);
+        let hit = self.cache.lock().unwrap().get(&scope.key(model_id, kind_tag(kind), src)).map(str::to_string);
         hit.map(|h| self.fix_ru(&h))
     }
 
@@ -447,6 +456,9 @@ impl Translator {
         if src.is_empty() {
             return Err(anyhow!("пустой текст"));
         }
+        // Keep the request's identity across await: a newly selected title must
+        // never receive an old page's result in its persistent cache.
+        let scope = self.scope.lock().unwrap().clone();
         if kind == TextKind::Dialogue && opts.use_history {
             // Two minutes without subtitles: a new scene, the old lines would mislead.
             let mut last = self.last_dialogue.lock().unwrap();
@@ -457,7 +469,7 @@ impl Translator {
             *last = Some(Instant::now());
         }
         if opts.use_cache {
-            if let Some(hit) = self.lookup(&preset.id, src, kind) {
+            if let Some(hit) = self.lookup_scoped(&scope, &preset.id, src, kind) {
                 if kind == TextKind::Dialogue {
                     self.fuzzy.lock().unwrap().remember(src, &hit);
                     if opts.use_history {
@@ -553,11 +565,11 @@ impl Translator {
         tracing::info!(target: "translate", "[{}|{}|{ms} мс] {src} → {text}", preset.id, kind_tag(kind));
         let follows_glossary = missed == 0;
         if opts.use_cache && follows_glossary {
-            let line = self.cache.lock().unwrap().insert(&[&preset.id, kind_tag(kind), src], &text);
+            let line = self.cache.lock().unwrap().insert(&scope.key(&preset.id, kind_tag(kind), src), &text);
             append(&self.paths.cache(), &line);
         }
         let text = self.fix_ru(&text);
-        if kind == TextKind::Dialogue {
+        if kind == TextKind::Dialogue && *self.scope.lock().unwrap() == scope {
             if follows_glossary {
                 self.fuzzy.lock().unwrap().remember(src, &text);
             }
@@ -576,6 +588,7 @@ impl Translator {
     /// the bubbles of a page (in reading order), `Interface` for unrelated signs.
     /// `context`: the last bubbles of the previous page (original, translation), shown to the model for reference.
     pub async fn translate_batch(&self, preset: &ModelPreset, game: &str, items: &[String], kind: TextKind, context: &[(String, String)]) -> Result<Vec<Option<String>>> {
+        let scope = self.scope.lock().unwrap().clone();
         // Models that read only the text (Hy-MT2) are not told that bubbles go
         // on with one phrase: such bubbles are joined into one before, and the
         // translation is cut back into them after.
@@ -604,7 +617,7 @@ impl Translator {
             for (&i, piece) in g.iter().zip(pieces) {
                 // Each bubble remembered on its own: the page comes back from the cache.
                 if whole {
-                    lines.push_str(&self.cache.lock().unwrap().insert(&[&preset.id, kind_tag(kind), refs[i]], &piece));
+                    lines.push_str(&self.cache.lock().unwrap().insert(&scope.key(&preset.id, kind_tag(kind), refs[i]), &piece));
                 }
                 out[i] = (!piece.is_empty()).then_some(piece);
             }
@@ -622,6 +635,7 @@ impl Translator {
         if !preset.template.trim().is_empty() {
             return Err(anyhow!("свой шаблон промпта: пакетный режим отключён"));
         }
+        let scope = self.scope.lock().unwrap().clone();
         let t0 = Instant::now();
         let messages = {
             let g = self.glossary.lock().unwrap();
@@ -681,7 +695,7 @@ impl Translator {
             for (src, part) in items.iter().zip(parts) {
                 out.push(part.and_then(|part| match prompt::clean_output(&part, src) {
                     Ok(t) => {
-                        lines.push_str(&cache.insert(&[&preset.id, kind_tag(kind), src], &t));
+                        lines.push_str(&cache.insert(&scope.key(&preset.id, kind_tag(kind), src), &t));
                         Some(t)
                     }
                     Err(_) => None, // the caller retries this one alone

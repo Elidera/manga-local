@@ -1,15 +1,35 @@
 //! Translation memory.
 //!
 //! Two stores share one type:
-//! * the automatic cache, keyed by (model, kind, source) — a different model
-//!   gets its own entries so comparing models is fair;
+//! * the automatic cache, scoped by profile, title and source language, then
+//!   keyed by (model, kind, source); old unscoped entries are not reused;
 //! * user corrections, keyed by source only — always win over the model.
 //!
 //! Persistence is append-only TSV (`key fields… <TAB> translation`): crash-safe,
 //! human-readable, and the last line for a key wins on reload.
 
 use crate::tsv;
+use crate::lang::Lang;
 use std::collections::HashMap;
+
+/// Identity of the reading whose automatic translations may be reused.
+/// User corrections remain separate: their keys are intentionally source-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scope {
+    pub profile: String,
+    pub title: String,
+    pub lang: Lang,
+}
+
+impl Scope {
+    pub fn new(profile: &str, title: &str, lang: Lang) -> Self {
+        Self { profile: profile.to_string(), title: title.trim().to_string(), lang }
+    }
+
+    pub fn key<'a>(&'a self, model: &'a str, kind: &'a str, source: &'a str) -> [&'a str; 7] {
+        ["v2", &self.profile, &self.title, self.lang.code(), model, kind, source]
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Store {
@@ -88,6 +108,40 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_phrase_stays_with_its_title_language_and_model_after_reload() {
+        let first = Scope::new("browser", "First title", Lang::En);
+        let second = Scope::new("browser", "Second title", Lang::En);
+        let mut s = Store::new();
+        let mut file = s.insert(&first.key("gemma", "d", "I'm ready."), "Я готов.");
+        file += &s.insert(&second.key("gemma", "d", "I'm ready."), "Я готова.");
+        let mut reloaded = Store::new();
+        reloaded.load_tsv(&file);
+        assert_eq!(reloaded.get(&first.key("gemma", "d", "I'm ready.")), Some("Я готов."));
+        assert_eq!(reloaded.get(&second.key("gemma", "d", "I'm ready.")), Some("Я готова."));
+        assert_eq!(reloaded.get(&first.key("other-model", "d", "I'm ready.")), None);
+        for other in [Scope::new("browser", "First title", Lang::Ja), Scope::new("screen", "First title", Lang::En)] {
+            assert_eq!(reloaded.get(&other.key("gemma", "d", "I'm ready.")), None);
+        }
+    }
+
+    #[test]
+    fn unscoped_cache_is_not_reused_and_forgetting_keeps_other_titles() {
+        let first = Scope::new("browser", "First", Lang::En);
+        let second = Scope::new("browser", "Second", Lang::En);
+        let mut s = Store::new();
+        s.load_tsv("gemma\td\tWait\tПодожди\n");
+        assert_eq!(s.get(&first.key("gemma", "d", "Wait")), None);
+        s.insert(&first.key("gemma", "d", "Wait"), "Погоди");
+        s.insert(&second.key("gemma", "d", "Wait"), "Стой");
+        s.remove(&first.key("gemma", "d", "Wait"));
+        let mut reloaded = Store::new();
+        reloaded.load_tsv(&s.dump());
+        assert_eq!(reloaded.get(&first.key("gemma", "d", "Wait")), None);
+        assert_eq!(reloaded.get(&second.key("gemma", "d", "Wait")), Some("Стой"));
+    }
+
     #[test]
     fn append_only_last_wins() {
         let mut s = Store::new();

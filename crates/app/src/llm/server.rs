@@ -26,10 +26,7 @@ use super::client::LlmClient;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
 
-#[derive(Debug)]
-pub enum ServerCmd {
-    Restart,
-}
+pub use super::control::ServerCmd;
 
 pub fn base_url(cfg: &Config) -> String {
     if cfg.llm.mode == "external" {
@@ -235,6 +232,33 @@ fn idle_for_unload(shared: &Shared) -> bool {
     crate::hotkeys::now_ms().saturating_sub(last) > min as u64 * 60_000
 }
 
+async fn pause_if_requested(cmd: ServerCmd, shared: &Shared) {
+    if let ServerCmd::PauseForBenchmark(request) = cmd {
+        // Benchmark clients use the same streaming code: they must not try to
+        // wake the managed model while using their temporary server.
+        ASLEEP.store(false, std::sync::atomic::Ordering::Relaxed);
+        shared.ui(|u| u.server = Some(ServerStatus::Stopped));
+        request.wait().await;
+    }
+}
+
+/// Reap the child before acknowledging the pause, so two models cannot compete
+/// for the same video memory. A failed stop drops the request without an ack.
+async fn stop_for_command(st: &mut Started, cmd: Option<ServerCmd>, shared: &Shared) -> bool {
+    let stopped = st.child.kill().await.is_ok() || st.child.try_wait().ok().flatten().is_some();
+    match cmd {
+        Some(cmd) => {
+            if stopped {
+                pause_if_requested(cmd, shared).await;
+            } else {
+                tracing::error!("не удалось остановить модель для переключения");
+            }
+            true
+        }
+        None => false,
+    }
+}
+
 pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: UnboundedReceiver<ServerCmd>) {
     touch();
     let set = |s: ServerStatus| shared.ui(|u| u.server = Some(s));
@@ -264,14 +288,16 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
             Err(e) => {
                 set(ServerStatus::Failed(e.to_string()));
                 // Wait for the user to fix things (e.g. switch model).
-                if rx.recv().await.is_none() {
-                    return;
+                match rx.recv().await {
+                    Some(cmd) => pause_if_requested(cmd, &shared).await,
+                    None => return,
                 }
                 continue;
             }
         };
         let downloading = preset.path.is_empty() || !Path::new(&preset.path).exists();
         let name = preset.name.clone();
+        let mut startup_command = None;
         let ready = {
             let shared2 = shared.clone();
             let wait = wait_ready(&client, &mut st, move |el, last| {
@@ -286,22 +312,27 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
             });
             tokio::select! {
                 r = wait => Some(r),
-                cmd = rx.recv() => { if cmd.is_none() { return; } None }
+                cmd = rx.recv() => { startup_command = cmd; None }
             }
         };
         match ready {
             None => {
-                let _ = st.child.kill().await;
+                if !stop_for_command(&mut st, startup_command, &shared).await { return; }
                 continue; // restart requested while starting
             }
             Some(Err(e)) => {
+                let stopped = st.child.kill().await.is_ok() || st.child.try_wait().ok().flatten().is_some();
                 failures += 1;
                 tracing::error!("{e}");
                 set(ServerStatus::Failed(e.to_string()));
                 let backoff = Duration::from_secs((2u64 << failures.min(5)).min(60));
                 tokio::select! {
                     _ = tokio::time::sleep(backoff) => {}
-                    cmd = rx.recv() => if cmd.is_none() { return; },
+                    cmd = rx.recv() => match cmd {
+                        Some(cmd) if stopped => pause_if_requested(cmd, &shared).await,
+                        Some(_) => {},
+                        None => return,
+                    },
                 }
                 continue;
             }
@@ -338,8 +369,7 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
                     break;
                 }
                 cmd = rx.recv() => {
-                    let _ = st.child.kill().await;
-                    if cmd.is_none() { return; }
+                    if !stop_for_command(&mut st, cmd, &shared).await { return; }
                     break;
                 }
                 _ = idle_check.tick() => {
@@ -351,14 +381,20 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
                     tracing::info!("переводчик не используется {} мин — выгружаю из памяти", shared.cfg().llm.unload_after_min);
                     let slept_at = crate::hotkeys::now_ms();
                     ASLEEP.store(true, std::sync::atomic::Ordering::Relaxed);
-                    let _ = st.child.kill().await;
+                    let stopped = st.child.kill().await.is_ok() || st.child.try_wait().ok().flatten().is_some();
                     set(ServerStatus::Stopped);
-                    // Woken only by a use after this moment: a wake-up left over
-                    // from the last sleep would load the model again at once.
+                    // Ignore wake-ups left over from an earlier idle period.
                     loop {
                         tokio::select! {
                             _ = WAKE.notified() => {}
-                            cmd = rx.recv() => { if cmd.is_none() { return; } break; }
+                            cmd = rx.recv() => {
+                                match cmd {
+                                    Some(cmd) if stopped => pause_if_requested(cmd, &shared).await,
+                                    Some(_) => {},
+                                    None => return,
+                                }
+                                break;
+                            }
                         }
                         if LAST_USE.load(std::sync::atomic::Ordering::Relaxed) >= slept_at {
                             break;
@@ -378,6 +414,7 @@ pub async fn supervise(shared: Arc<Shared>, client: LlmClient, mut rx: Unbounded
 /// processor. A slow model with a video card present gets one clear notice.
 async fn check_speed(shared: Arc<Shared>, exe: PathBuf) {
     use std::sync::atomic::Ordering;
+    if crate::bench::running() { return; }
     let vulkan = exe.parent().is_some_and(|d| d.join("ggml-vulkan.dll").exists());
     // The model loads again after every pause: its devices and speed are
     // looked at once per model in a run.
@@ -403,6 +440,7 @@ async fn check_speed(shared: Arc<Shared>, exe: PathBuf) {
     let mut last = 0;
     for _ in 0..600 {
         tokio::time::sleep(Duration::from_secs(2)).await;
+        if crate::bench::running() { return; }
         let v = GEN_SPEED.load(Ordering::Relaxed);
         if v != 0 && v != last {
             seen += 1;

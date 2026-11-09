@@ -9,6 +9,8 @@ fn main() {
 #[cfg(windows)]
 mod bench;
 #[cfg(windows)]
+mod bench_support;
+#[cfg(windows)]
 mod capture;
 #[cfg(windows)]
 mod config;
@@ -258,6 +260,14 @@ mod app {
     ) {
         while let Some(cmd) = rx.recv().await {
             tracing::info!("команда: {}", format!("{cmd:?}").chars().take(120).collect::<String>());
+            if bench::running() && matches!(&cmd,
+                Command::ScreenTranslate | Command::TranslateFiles(_) | Command::RunBench |
+                Command::SwitchModel(_) | Command::UseModelFile(_) | Command::RestartServer |
+                Command::TestTranslate(_) | Command::BadTranslation | Command::FreezeTranslate(_) | Command::Diagnose
+            ) {
+                shared.ui(|u| u.notice("Дождитесь окончания сравнения моделей"));
+                continue;
+            }
             match cmd {
                 Command::ScreenTranslate => match &ocr {
                     Some(o) => {
@@ -436,11 +446,13 @@ mod app {
                     });
                 }
                 Command::RunBench => {
-                    let sh = shared.clone();
+                    let (sh, srv) = (shared.clone(), srv.clone());
                     tokio::spawn(async move {
-                        let r = bench::run(sh.clone()).await;
+                        let r = bench::run(sh.clone(), srv).await;
                         sh.ui(|u| {
-                            u.bench_progress = None;
+                            // A second queued click may finish with "already
+                            // running" while the first comparison is active.
+                            if !bench::running() { u.bench_progress = None; }
                             match &r {
                                 Ok(p) => u.notice(format!("Бенчмарк готов: {}", p.display())),
                                 Err(e) => u.notice(format!("Бенчмарк: {e}")),

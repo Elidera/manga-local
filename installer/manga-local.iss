@@ -8,6 +8,9 @@
 #ifndef Dist
   #define Dist "..\dist"
 #endif
+#ifndef BuildLabel
+  #define BuildLabel ""
+#endif
 
 [Setup]
 AppId={{FD9BC92E-7D97-487D-A7E5-BC0335CDE437}
@@ -21,7 +24,12 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
+#if BuildLabel != ""
+AppVerName=Manga Local — {#BuildLabel}
+OutputBaseFilename=MangaLocal-{#BuildLabel}-Setup-x64
+#else
 OutputBaseFilename=MangaLocal-Setup-{#AppVersion}-x64
+#endif
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

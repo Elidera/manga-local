@@ -279,6 +279,36 @@ pub fn is_label(s: &str, lang: Lang) -> bool {
     }
 }
 
+/// Common short replies can be genuine even when a bubble has no closed outline.
+/// Keep a small allow-list so isolated strokes and arbitrary OCR fragments do
+/// not become dialogue. Digits are kept in the key and therefore never match.
+pub fn is_short_reply(s: &str, lang: Lang) -> bool {
+    let word: String = s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    let replies: &[&str] = match lang {
+        Lang::Ja => &["あ", "あっ", "ああ", "え", "えっ", "ええ", "お", "おお", "おい", "うん", "いや", "いいえ", "はい", "ん", "ふん", "へえ", "うわ", "はあ"],
+        Lang::Ko => &["응", "네", "예", "아", "어", "오", "뭐", "왜", "야", "헉", "앗", "아니", "음", "흠", "쳇"],
+        Lang::Zh => &["啊", "嗯", "哦", "好", "不", "是", "喂", "唉", "哎", "咦", "哼", "呀", "哈", "对", "對", "不是", "不行"],
+        Lang::En => &["no", "oh", "ah", "eh", "ow", "hm", "hmm", "huh", "uh"],
+    };
+    replies.contains(&word.as_str())
+}
+
+/// A small isolated line outside a bubble is usually an OCR fragment. Known
+/// replies and emphatic punctuation are retained, including the Japanese «あっ».
+pub fn is_loose_fragment(s: &str, lang: Lang, line_h: f32, page_h: f32) -> bool {
+    s.chars().filter(|c| c.is_alphanumeric()).count() <= 2
+        && !s.contains(['!', '?', '！', '？'])
+        && line_h < page_h * 0.035
+        && !is_short_reply(s, lang)
+}
+
+/// With manga-ocr enabled, short Japanese replies read by the page OCR must
+/// survive the artwork filter too. Drawn circles remain excluded.
+pub fn is_japanese_outside_text(s: &str) -> bool {
+    !s.contains(['〇', '○', '◯'])
+        && (text::kana_count(s) + text::han_count(s) >= 4 || is_short_reply(s, Lang::Ja))
+}
+
 /// Does a short text look like a sound effect («쾅!», «두근두근», «ドキドキ»,
 /// «BANG!»)? Only the shape is judged (a few letters, or a doubled sound,
 /// one word); the caller also checks it stands on the artwork, outside every
@@ -359,6 +389,32 @@ pub fn other_page_language(lines: &[&str], chosen: Lang) -> Option<Lang> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_replies_survive_both_page_filters_without_a_bubble_outline() {
+        // Regression: OCR read «あっ», but F8 discarded it after recognition.
+        for s in ["あっ", "「え…」", "うん", "はい", "いいえ"] {
+            assert!(is_label(s, Lang::Ja), "{s}");
+            assert!(!is_loose_fragment(s, Lang::Ja, 20.0, 1080.0), "{s}");
+            assert!(is_japanese_outside_text(s), "{s}");
+        }
+        for (s, lang) in [("응", Lang::Ko), ("아니…", Lang::Ko), ("嗯", Lang::Zh), ("No…", Lang::En)] {
+            assert!(!is_loose_fragment(s, lang, 20.0, 1080.0), "{s}");
+        }
+    }
+
+    #[test]
+    fn short_reply_exception_does_not_admit_ocr_noise() {
+        for (s, lang) in [("름", Lang::Ko), ("4수", Lang::Ko), ("一", Lang::Ja), ("〇", Lang::Ja), ("o1", Lang::En)] {
+            assert!(is_loose_fragment(s, lang, 20.0, 1080.0), "{s}");
+        }
+        for s in ["も。〇き朝。", "〇あっ", "一二", ""] {
+            assert!(!is_japanese_outside_text(s), "{s}");
+        }
+        assert!(is_japanese_outside_text("ちょっと待って"));
+        assert!(!is_loose_fragment("ドン!", Lang::Ja, 20.0, 1080.0));
+        assert!(!is_loose_fragment("一", Lang::Ja, 80.0, 1080.0));
+    }
 
     #[test]
     fn detects() {
