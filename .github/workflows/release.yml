@@ -187,9 +187,22 @@ jobs:
           if ($p.ExitCode -eq 2) { Write-Host "::warning::Windows OCR is not available on the runner - screenshot tests skipped"; exit 0 }
           exit $p.ExitCode
 
+      - name: Hard cases (report only, never fails the build)
+        if: always()
+        shell: pwsh
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          $p = Start-Process -FilePath app\MangaLocal\manga-local.exe -ArgumentList '--selftest','tests\hard','--out','hard-report.md','--ja-models','ja-models' -Wait -PassThru
+          Write-Host "exit code $($p.ExitCode)"
+          if (Test-Path hard-report.md) { Get-Content hard-report.md }
+          exit 0
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: selftest-report
-          path: selftest-report.md
+          path: |
+            selftest-report.md
+            hard-report.md
           retention-days: 7
