@@ -66,15 +66,51 @@ pub fn is_label_line(text: &str, lang: manga_core::lang::Lang, tr: &Translator) 
 /// coordinates) and the colour around it. `found`: the bubble outlines of the
 /// page (`manga_core::bubbles::find`, looked for once per page). Not ordered.
 fn bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, found: &[manga_core::bubbles::Found]) -> Vec<InterfaceItem> {
-    let kept: Vec<&OcrLine> = lines.iter().filter(|l| is_label_line(&l.text, lang, tr)).collect();
+    let outlines: Vec<Rect> = found.iter().map(|f| f.outer).collect();
+    let bubble_of = |r: &Rect| {
+        let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        outlines.iter().position(|o| cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h)
+    };
+    // A line that alone does not look like text («I», «…») stays when it is in
+    // a bubble together with real text: it is part of the phrase.
+    let good: Vec<bool> = lines.iter().map(|l| is_label_line(&l.text, lang, tr)).collect();
+    let kept: Vec<&OcrLine> = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| {
+            let r = &l.rect;
+            // Right above or below a real line, overlapping it sideways (the
+            // «I'M» over «THANKFUL FOR ALL…» in a caption).
+            let next_to_text = |o: &OcrLine| {
+                let h = o.rect.h.max(r.h);
+                let gap = (o.rect.y - (r.y + r.h)).max(r.y - (o.rect.y + o.rect.h));
+                let overlap = (r.x + r.w).min(o.rect.x + o.rect.w) - r.x.max(o.rect.x);
+                gap < h * 0.8 && overlap > 0.0 && r.h < o.rect.h * 1.8 && o.rect.h < r.h * 1.8
+            };
+            good[*i]
+                || !tr.should_skip(&l.text)
+                    && l.text.chars().any(char::is_alphanumeric)
+                    && lines.iter().enumerate().any(|(j, o)| j != *i && good[j] && (bubble_of(&o.rect).is_some() && bubble_of(&o.rect) == bubble_of(r) || next_to_text(o)))
+        })
+        .map(|(_, l)| l)
+        .collect();
     let rects: Vec<Rect> = kept.iter().map(|l| l.rect).collect();
     // Lines inside one bubble outline are one bubble, whatever the spacing.
-    let outlines: Vec<Rect> = found.iter().map(|f| f.outer).collect();
     let groups = layout::group_in_outlines(&rects, &outlines);
     groups
         .iter()
         .map(|g| {
-            let rect = layout::block_rect(&rects, g);
+            let mut rect = layout::block_rect(&rects, g);
+            // In a light speech bubble, everything lettered there is cleaned
+            // away, also a line OCR did not read (a bigger bold first line
+            // like «HEY!» is often skipped): the letters box of the bubble.
+            if let Some(f) = bubble_of(&rect).map(|b| &found[b]) {
+                let light = manga_core::image::luma(f.paper[2], f.paper[1], f.paper[0]) > 200;
+                let small = f.outer.w * f.outer.h < frame.width as f32 * frame.height as f32 * 0.25;
+                if light && small && !f.vertical && f.text.h <= rect.h * 3.0 + f.char_px * 2.0 {
+                    rect = rect.union(&f.text);
+                }
+            }
             let texts: Vec<&str> = g.iter().map(|&i| kept[i].text.as_str()).collect();
             let mut src = tr.fix_ocr(&manga_core::text::join_lines_for(&texts, lang));
             if lang == Lang::En {
@@ -153,14 +189,8 @@ fn page_order(items: Vec<InterfaceItem>, frame: &Frame, rtl: bool) -> Vec<Interf
 #[allow(clippy::too_many_arguments)]
 pub async fn page_items(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ocr: &Ocr, found: Vec<manga_core::bubbles::Found>, ja: Option<Arc<crate::jaocr::JaOcr>>) -> Vec<InterfaceItem> {
     let rtl = lang == Lang::Ja;
-    let extra = reread_empty(lines, lang, tr, frame, ocr, &found).await;
-    let all: Vec<OcrLine>;
-    let lines = if extra.is_empty() {
-        lines
-    } else {
-        all = lines.iter().cloned().chain(extra).collect();
-        &all[..]
-    };
+    let lines = reread_bubbles(lines, lang, tr, frame, ocr, &found).await;
+    let lines = &lines[..];
     let mut items = bubbles(lines, lang, tr, frame, &found);
     let Some(ja) = ja.filter(|_| lang == Lang::Ja) else { return page_order(items, frame, rtl) };
     let inside = |r: &manga_core::image::Rect, o: &manga_core::image::Rect| {
@@ -243,25 +273,45 @@ fn letters_upscale(base: u32, found: &[manga_core::bubbles::Found], x: f32, w: f
     ((40.0 / m).round() as u32).clamp(1, 4).max(base)
 }
 
-/// Bubbles found by the picture where Windows OCR read nothing: read once more,
-/// each on its own and enlarged. Windows OCR picks one letter size per picture,
-/// so next to a huge «CRASH!» it can skip the ordinary bubbles altogether.
-/// Vertical Japanese is left to manga-ocr.
-async fn reread_empty(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ocr: &Ocr, found: &[manga_core::bubbles::Found]) -> Vec<OcrLine> {
+/// Bubbles found by the picture where Windows OCR read nothing, or only part
+/// of the lettering (the letters box reaches a line height and more beyond
+/// the lines read): read once more, each on its own and enlarged. Windows OCR
+/// picks one letter size per picture, so next to a huge «CRASH!» it can skip
+/// ordinary bubbles, and a bigger bold first line («HEY!») next to normal
+/// ones. Vertical Japanese is left to manga-ocr. Returns the lines to use.
+async fn reread_bubbles(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Frame, ocr: &Ocr, found: &[manga_core::bubbles::Found]) -> Vec<OcrLine> {
     let inside = |r: &Rect, o: &Rect| {
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h
     };
+    let letters = |t: &str| {
+        t.chars()
+            .filter(|&c| match lang {
+                Lang::Ko => manga_core::text::is_hangul(c),
+                Lang::Ja => manga_core::text::is_kana(c) || manga_core::text::is_han(c),
+                Lang::Zh => manga_core::text::is_han(c),
+                Lang::En => c.is_ascii_alphabetic(),
+            })
+            .count()
+    };
     let page = frame.width as f32 * frame.height as f32;
-    let empty: Vec<&manga_core::bubbles::Found> = found
+    let todo: Vec<&manga_core::bubbles::Found> = found
         .iter()
         .filter(|f| !(lang == Lang::Ja && f.vertical))
         .filter(|f| f.text.w >= 12.0 && f.text.h >= 8.0 && f.outer.w * f.outer.h < page * 0.4)
-        .filter(|f| !lines.iter().any(|l| inside(&l.rect, &f.outer)))
+        .filter(|f| {
+            let read: Vec<&OcrLine> = lines.iter().filter(|l| inside(&l.rect, &f.outer)).collect();
+            let Some(first) = read.first() else { return true };
+            let u = read.iter().skip(1).fold(first.rect, |a, l| a.union(&l.rect));
+            let h = read.iter().map(|l| l.rect.h).sum::<f32>() / read.len() as f32;
+            let light = manga_core::image::luma(f.paper[2], f.paper[1], f.paper[0]) > 200;
+            light && (u.y - f.text.y > h * 0.9 || (f.text.y + f.text.h) - (u.y + u.h) > h * 0.9)
+        })
         .take(12)
         .collect();
-    let mut out = Vec::new();
-    for f in empty {
+    let mut out: Vec<OcrLine> = lines.to_vec();
+    let mut added = 0;
+    for f in todo {
         let pad = 4.0;
         let x = (f.outer.x - pad).max(0.0) as u32;
         let y = (f.outer.y - pad).max(0.0) as u32;
@@ -273,23 +323,26 @@ async fn reread_empty(lines: &[OcrLine], lang: Lang, tr: &Translator, frame: &Fr
         // Letters about 40 px high read best.
         let k = (40.0 / f.char_px.max(4.0)).round().clamp(2.0, 4.0) as u32;
         let Ok(read) = ocr.recognize(frame.crop(x, y, w, h), k, lang).await else { continue };
-        for mut l in read {
-            // Only real text: a few letters of the language (eyes and hair read as «O», «ll»…).
-            let own = l.text.chars().filter(|&c| match lang {
-                Lang::Ko => manga_core::text::is_hangul(c),
-                Lang::Ja => manga_core::text::is_kana(c) || manga_core::text::is_han(c),
-                Lang::Zh => manga_core::text::is_han(c),
-                Lang::En => c.is_ascii_alphabetic(),
-            }).count();
-            if own < if lang == Lang::En { 3 } else { 1 } || !is_label_line(&l.text, lang, tr) {
-                continue;
-            }
-            l.rect = l.rect.offset(x as f32, y as f32);
-            out.push(l);
+        let new: Vec<OcrLine> = read
+            .into_iter()
+            .map(|mut l| {
+                l.rect = l.rect.offset(x as f32, y as f32);
+                l
+            })
+            .filter(|l| inside(&l.rect, &f.outer) && !tr.should_skip(&l.text))
+            .collect();
+        let had: usize = out.iter().filter(|l| inside(&l.rect, &f.outer)).map(|l| letters(&l.text)).sum();
+        let got: usize = new.iter().map(|l| letters(&l.text)).sum();
+        // Only real text, and more of it than before (eyes and hair read as «O», «ll»…).
+        if got < if lang == Lang::En { 3 } else { 1 } || got <= had || !new.iter().any(|l| is_label_line(&l.text, lang, tr)) {
+            continue;
         }
+        out.retain(|l| !inside(&l.rect, &f.outer));
+        added += new.len();
+        out.extend(new);
     }
-    if !out.is_empty() {
-        tracing::info!(target: "interface", "перечитаны пустые пузыри: +{} строк", out.len());
+    if added > 0 {
+        tracing::info!(target: "interface", "перечитаны пузыри: {added} строк");
     }
     out
 }

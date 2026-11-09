@@ -193,25 +193,47 @@ fn recognize(engine: &OcrEngine, frame: &Frame, scale: f32, lang: Lang) -> Resul
     let result = engine.RecognizeAsync(&bitmap)?.get()?;
     let mut out = Vec::new();
     for line in result.Lines()? {
-        let raw = line.Text()?.to_string_lossy();
-        let norm = text::normalize_for(&raw, lang);
-        if norm.is_empty() {
-            continue;
-        }
-        let mut rect: Option<Rect> = None;
+        let mut words: Vec<(String, Rect)> = Vec::new();
         for w in line.Words()? {
             let r = w.BoundingRect()?;
-            let wr = Rect { x: r.X, y: r.Y, w: r.Width, h: r.Height };
-            rect = Some(match rect {
-                Some(a) => a.union(&wr),
-                None => wr,
-            });
+            words.push((w.Text()?.to_string_lossy(), Rect { x: r.X, y: r.Y, w: r.Width, h: r.Height }));
         }
-        if let Some(r) = rect {
-            out.push(OcrLine { text: norm, rect: r.scale(1.0 / scale) });
+        // Windows OCR joins words standing at one height right across the
+        // page: captions of three panels side by side become one «line». A
+        // gap wider than two letter heights splits it.
+        for piece in split_at_gaps(&words) {
+            let raw: Vec<&str> = piece.iter().map(|(t, _)| t.as_str()).collect();
+            let norm = text::normalize_for(&raw.join(" "), lang);
+            if norm.is_empty() {
+                continue;
+            }
+            let rect = piece.iter().skip(1).fold(piece[0].1, |a, (_, r)| a.union(r));
+            out.push(OcrLine { text: norm, rect: rect.scale(1.0 / scale) });
         }
     }
     Ok(out)
+}
+
+/// Split a line's words where the gap between two neighbours is wider than
+/// two letter heights (the median word height).
+fn split_at_gaps(words: &[(String, Rect)]) -> Vec<&[(String, Rect)]> {
+    if words.len() < 2 {
+        return if words.is_empty() { vec![] } else { vec![words] };
+    }
+    let mut hs: Vec<f32> = words.iter().map(|(_, r)| r.h).collect();
+    hs.sort_by(|a, b| a.total_cmp(b));
+    let h = hs[hs.len() / 2].max(1.0);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for i in 1..words.len() {
+        let (a, b) = (&words[i - 1].1, &words[i].1);
+        if b.x - (a.x + a.w) > 2.0 * h {
+            out.push(&words[start..i]);
+            start = i;
+        }
+    }
+    out.push(&words[start..]);
+    out
 }
 
 /// Group OCR lines of a subtitle region into one text (top-to-bottom).
