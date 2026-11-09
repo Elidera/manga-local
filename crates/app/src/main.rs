@@ -25,6 +25,8 @@ mod interface;
 #[cfg(windows)]
 mod jaocr;
 #[cfg(windows)]
+mod journal;
+#[cfg(windows)]
 mod llm;
 #[cfg(windows)]
 mod neural;
@@ -150,6 +152,7 @@ mod app {
 
         crate::neural::init(crate::neural::model_dir(&shared));
         crate::neural::set_on(cfg.interface.ocr_engine == "neural");
+        crate::journal::set_on(cfg.interface.journal);
 
         // Hotkeys.
         let problems = hotkeys::spawn(&cfg.hotkeys, cmd_tx.clone());
@@ -467,6 +470,7 @@ mod app {
                 }
                 Command::SaveConfig => {
                     crate::neural::set_on(shared.cfg().interface.ocr_engine == "neural");
+                    crate::journal::set_on(shared.cfg().interface.journal);
                     shared.save_config();
                 }
                 Command::DownloadNeural => {

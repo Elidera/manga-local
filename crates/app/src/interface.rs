@@ -570,6 +570,7 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
         }
     }
     let ja = crate::jaocr::engine(shared).await;
+    let outlines = found.len();
     let items: Vec<InterfaceItem> = page_items(&lines, lang, tr, &frame, ocr, found, ja)
         .await
         .into_iter()
@@ -592,6 +593,10 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
     }
     let page = Page { frame: frame.clone(), area: full };
     if items.is_empty() {
+        if outlines >= 2 {
+            crate::journal::begin(gen, &frame, lang, "экран", ocr_ms, outlines, &lines, &[], full);
+            crate::journal::finish(shared, gen, false);
+        }
         shared.ui(|u| {
             if follow {
                 u.interface = Some(InterfaceView { items: vec![], pending: 0, generation: gen });
@@ -619,8 +624,10 @@ async fn translate_page(shared: &Arc<Shared>, tr: &Arc<Translator>, ocr: &Ocr, s
         it.dst = done.get(&it.src).cloned();
     }
     let n_pending = talk.len() + sfx.len();
+    crate::journal::begin(gen, &frame, lang, "экран", ocr_ms, outlines, &lines, &items, full);
     shared.ui(|u| u.interface = Some(InterfaceView { items, pending: n_pending, generation: gen }));
     if n_pending == 0 {
+        crate::journal::finish(shared, gen, false);
         remember_page(shared, gen);
     } else {
         let (shared, tr) = (shared.clone(), tr.clone());
@@ -639,6 +646,7 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
     let set_result = |src: &str, dst: String| {
         // The original back means the translation failed: the bubble stays as it is.
         let failed = dst == src;
+        crate::journal::result(gen, src, &dst);
         let names = if failed { Vec::new() } else { tr.observe_names(lang, src, &dst) };
         shared.ui(|u| {
             u.offer_names(names);
@@ -658,6 +666,7 @@ async fn translate_bubbles(shared: &Arc<Shared>, tr: &Arc<Translator>, preset: &
     if !sfx.is_empty() && alive() {
         translate_texts(shared, tr, preset, game, sfx, TextKind::Interface, &[], alive, set_result).await;
     }
+    crate::journal::finish(shared, gen, !alive());
     if alive() {
         remember_page(shared, gen);
     }

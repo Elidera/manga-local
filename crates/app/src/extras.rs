@@ -28,6 +28,7 @@ fn short(s: &str) -> String {
 /// Ctrl+F11: the last dialogue translation is bad — forget it, note it in
 /// bad.tsv and translate the line again (a new sample from the model).
 pub async fn bad_translation(shared: Arc<Shared>, tr: Arc<Translator>) {
+    crate::journal::mark_bad();
     // A translated page is on screen: translate all its bubbles again.
     let page: Option<(u64, Vec<(String, String)>)> = shared.ui.lock().unwrap().interface.as_ref().map(|v| {
         let mut pairs: Vec<(String, String)> = Vec::new();

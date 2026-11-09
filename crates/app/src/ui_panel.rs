@@ -912,6 +912,32 @@ fn page_settings(ui: &mut Ui, shared: &Arc<Shared>, query: &mut String) -> bool 
             shared.send(Command::RestartServer);
         }
     });
+    any |= search_card(ui, "Журнал для разработчика", "журнал для разработчика отчёт ошибки собирать снимки страниц проверка расширение браузер", |ui| {
+        let i = &mut c.interface;
+        dirty |= setting_row(ui, "Собирать журнал", "Каждая переведённая страница сохраняется со снимком, текстом и переводом; сомнительные места программа отмечает сама. Ctrl+F11 отмечает плохой перевод. Никуда не отправляется", |ui| toggle(ui, &mut i.journal).changed());
+        let pages = shared.ui.lock().unwrap().journal_pages;
+        let (total, mb) = crate::journal::summary(shared);
+        let total = total.max(pages as usize);
+        hint(ui, &if total == 0 { "Журнал пуст: включите и почитайте пару глав с F8".to_string() } else { format!("В журнале {total} стр., {mb} МБ") });
+        ui.horizontal(|ui| {
+            if ui.add_enabled(total > 0, egui::Button::new("Собрать отчёт")).on_hover_text("Журнал, записи работы и настройки в один ZIP на рабочем столе — его можно прислать разработчику").clicked() {
+                let sh = shared.clone();
+                std::thread::spawn(move || match crate::journal::report(&sh) {
+                    Ok(p) => {
+                        sh.ui(|u| u.notice(format!("Отчёт готов: {}", p.display())));
+                        if let Some(dir) = p.parent() {
+                            sh.send(Command::Open(dir.to_path_buf()));
+                        }
+                    }
+                    Err(e) => sh.ui(|u| u.notice(format!("Отчёт не собрался: {e}"))),
+                });
+            }
+            if ui.add_enabled(total > 0, egui::Button::new("Очистить")).on_hover_text("Удалить все сохранённые страницы журнала").clicked() {
+                crate::journal::clear(shared);
+                shared.ui(|u| u.journal_pages = 0);
+            }
+        });
+    });
     ui.add_space(8.0);
 
     let hk = c.hotkeys.clone();

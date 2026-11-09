@@ -211,6 +211,8 @@ pub struct UiState {
     pub ja_ocr_status: Option<String>,
     /// Neural OCR: download progress or a problem.
     pub neural_status: Option<String>,
+    /// Pages written to the journal in this run.
+    pub journal_pages: u32,
     /// Character names noticed in translations, offered for the title's dictionary.
     pub name_offers: Vec<(String, String)>,
     /// The page looks like another language than the chosen one: (chosen, seen),
