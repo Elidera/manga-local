@@ -222,6 +222,8 @@ pub struct UiState {
     pub test_result: Option<String>,
     /// Until when the test label is shown over the screen.
     pub test_overlay_until: Option<std::time::Instant>,
+    /// A big «Перевод включён / выключен» in the middle of the screen, until then.
+    pub flash: Option<(String, std::time::Instant)>,
 }
 
 impl UiState {

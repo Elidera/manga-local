@@ -199,11 +199,15 @@ pub async fn toggle(shared: Arc<Shared>, tr: Arc<Translator>, ocr: Ocr) {
     if showing {
         READING.store(0, Ordering::SeqCst);
         shared.interface_gen.fetch_add(1, Ordering::SeqCst);
-        shared.ui(|u| u.interface = None);
+        shared.ui(|u| {
+            u.interface = None;
+            u.flash = Some(("Перевод выключен".into(), Instant::now() + Duration::from_millis(1200)));
+        });
         return;
     }
     let session = SESSIONS.fetch_add(1, Ordering::SeqCst) + 1;
     READING.store(session, Ordering::SeqCst);
+    shared.ui(|u| u.flash = Some(("Перевод включён".into(), Instant::now() + Duration::from_millis(1200))));
     PAGE_CONTEXT.lock().unwrap().clear();
     let follow = shared.cfg().interface.auto_hide;
     let mut shown_at = crate::hotkeys::now_ms();

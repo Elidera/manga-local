@@ -48,6 +48,8 @@ pub const TITLE: &str = "Manga Local Overlay";
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Corner {
     TopRight,
+    /// The «F8 is on» mark, above the taskbar, in the panel's accent colour.
+    BottomRight([u8; 3]),
     Center,
 }
 
@@ -120,6 +122,21 @@ fn scene(u: &UiState, cfg: &Config) -> Vec<El> {
         }
         if view.pending > 0 {
             out.push(El::Badge { text: format!("Перевод страницы… осталось {}", view.pending), corner: Corner::TopRight, size_pt: 14.0 });
+        }
+        // Always visible while F8 is on, so it is clear the mode works even
+        // when nothing is shown (scrolling, a page without text).
+        let what = if u.show_original {
+            "показан оригинал".to_string()
+        } else if view.items.is_empty() && view.pending == 0 {
+            "жду, пока страница остановится".to_string()
+        } else {
+            format!("{} — выключить", cfg.hotkeys.screen_translate)
+        };
+        out.push(El::Badge { text: format!("●  Перевод включён · {what}"), corner: Corner::BottomRight(cfg.general.accent), size_pt: 12.0 });
+    }
+    if let Some((text, until)) = &u.flash {
+        if Instant::now() < *until {
+            out.push(El::Badge { text: text.clone(), corner: Corner::Center, size_pt: 30.0 });
         }
     }
     if let Some(t) = u.test_overlay_until {
@@ -279,6 +296,7 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
             let m = (12.0 * s) as i32;
             let (x, y) = match corner {
                 Corner::TopRight => (screen.0 as i32 - w - 2 * m, m),
+                Corner::BottomRight(_) => (screen.0 as i32 - w - 2 * m, screen.1 as i32 - h - (56.0 * s) as i32),
                 Corner::Center => ((screen.0 as i32 - w) / 2, (screen.1 as i32 - h) / 2),
             };
             let job = TextJob {
@@ -290,7 +308,12 @@ fn layout(el: &El, g: &mut Gdi, scale: f32, screen: (f32, f32)) -> Option<Op> {
                 y: y + pady,
                 w: tw + 2,
                 h: th,
-                color: if *corner == Corner::Center { Rgba(255, 225, 160, 255) } else { Rgba(255, 240, 210, 255) },
+                color: match corner {
+                    Corner::Center => Rgba(255, 225, 160, 255),
+                    // The panel's accent colour (turquoise by default).
+                    Corner::BottomRight(a) => Rgba(a[0], a[1], a[2], 255),
+                    Corner::TopRight => Rgba(255, 240, 210, 255),
+                },
                 outline: None,
             };
             Some(Op::new([x, y, w, h], Rgba(0, 0, 0, fill), radius, vec![job]))
