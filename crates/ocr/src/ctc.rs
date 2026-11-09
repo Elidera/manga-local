@@ -25,9 +25,15 @@ pub fn decode(logits: &[f32], t: usize, c: usize, chars: &[String]) -> (String, 
 
 /// The symbol list of a PaddleOCR recogniser from its embedded alphabet
 /// (one symbol per line): blank first, the alphabet, a space last.
+/// A trailing line break in the embedded list is not a symbol: counted as
+/// one it would shift the space onto an empty slot and words would run
+/// together ("You'relateagain").
 pub fn alphabet(embedded: &str) -> Vec<String> {
     let mut v = vec![String::new()];
     v.extend(embedded.split('\n').map(|s| s.trim_end_matches('\r').to_string()));
+    while v.len() > 1 && v.last().is_some_and(|s| s.is_empty()) {
+        v.pop();
+    }
     v.push(" ".into());
     v
 }
@@ -49,5 +55,11 @@ mod tests {
         let (s, p) = decode(&logits, seq.len(), c, &chars);
         assert_eq!(s, "aab b");
         assert!((p - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn trailing_line_break_keeps_the_space_last() {
+        assert_eq!(alphabet("a\nb\n"), alphabet("a\nb"));
+        assert_eq!(alphabet("a\r\nb\r\n").len(), 4);
     }
 }

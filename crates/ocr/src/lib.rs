@@ -111,6 +111,10 @@ impl Recognizer {
             let res = s.run(ort::inputs![input]).map_err(|e| anyhow!("чтение текста: {e}"))?;
             let (shape, logits) = res[0].try_extract_tensor::<f32>().map_err(|e| anyhow!("{e}"))?;
             let (t, c) = (shape[1] as usize, shape[2] as usize);
+            // Blank + alphabet + space; one less when the list already ends in a space.
+            if c != self.chars.len() && c + 1 != self.chars.len() {
+                return Err(anyhow!("алфавит модели не совпадает: {} знаков, выходов {c}", self.chars.len()));
+            }
             for (k, &i) in chunk.iter().enumerate() {
                 out[i] = ctc::decode(&logits[k * t * c..(k + 1) * t * c], t, c, &self.chars);
             }
@@ -125,6 +129,36 @@ pub struct Engine {
     pub rec: Recognizer,
 }
 
+/// Large single symbols one under another («あ» over «っ») are found as
+/// separate boxes: joined into one column, they are read together.
+fn stack_columns(mut rects: Vec<Rect>) -> Vec<Rect> {
+    // Not a horizontal line: a symbol or a column.
+    let upright = |r: &Rect| r.w <= r.h * 1.5;
+    loop {
+        let mut joined = None;
+        'search: for i in 0..rects.len() {
+            for j in 0..rects.len() {
+                let (a, b) = (rects[i], rects[j]);
+                // a above b, both symbols or columns already.
+                if i == j || !upright(&a) || !upright(&b) || b.y < a.y + a.h * 0.5 {
+                    continue;
+                }
+                let narrow = a.w.min(b.w);
+                let overlap = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
+                let gap = b.y - (a.y + a.h);
+                if overlap >= narrow * 0.7 && a.w.min(b.w) >= a.w.max(b.w) * 0.6 && gap < narrow * 0.6 {
+                    joined = Some((i, j));
+                    break 'search;
+                }
+            }
+        }
+        let Some((i, j)) = joined else { return rects };
+        let u = rects[i].union(&rects[j]);
+        rects[i] = u;
+        rects.remove(j);
+    }
+}
+
 impl Engine {
     pub fn load(det: &Path, rec: &Path, threads: usize) -> Result<Self> {
         Ok(Self { det: Detector::load(det, threads)?, rec: Recognizer::load(rec, threads)? })
@@ -133,7 +167,7 @@ impl Engine {
     /// All lines of the page read with at least `min_score`.
     pub fn read(&self, f: &Frame, min_score: f32) -> Result<Vec<Line>> {
         let found = self.det.find(f)?;
-        let rects: Vec<Rect> = found.iter().map(|(r, _)| *r).collect();
+        let rects = stack_columns(found.iter().map(|(r, _)| *r).collect());
         let texts = self.rec.read(f, &rects)?;
         Ok(rects
             .into_iter()
@@ -142,9 +176,37 @@ impl Engine {
             // strokes are read as «O», «1», «一».
             .filter(|(_, (t, s))| {
                 let n = t.trim().chars().count();
-                n > 0 && *s >= if n <= 2 { min_score.max(0.9) } else { min_score }
+                let need = match n {
+                    1 => min_score.max(0.9),
+                    2 => min_score.max(0.8),
+                    _ => min_score,
+                };
+                n > 0 && *s >= need
             })
             .map(|(rect, (text, score))| Line { text: text.trim().to_string(), rect, score })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn r(x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect { x, y, w, h }
+    }
+
+    #[test]
+    fn big_symbols_one_under_another_make_a_column() {
+        let got = stack_columns(vec![r(266.0, 576.0, 79.0, 87.0), r(274.0, 668.0, 65.0, 58.0)]);
+        assert_eq!(got.len(), 1);
+        assert!(got[0].h > got[0].w * 1.5);
+    }
+
+    #[test]
+    fn lines_of_text_stay_apart() {
+        // Two horizontal lines, and two symbols side by side.
+        assert_eq!(stack_columns(vec![r(100.0, 100.0, 300.0, 30.0), r(100.0, 135.0, 280.0, 30.0)]).len(), 2);
+        assert_eq!(stack_columns(vec![r(100.0, 100.0, 40.0, 40.0), r(150.0, 100.0, 40.0, 40.0)]).len(), 2);
     }
 }

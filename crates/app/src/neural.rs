@@ -159,7 +159,8 @@ pub fn read(engine: &Engine, frame: &manga_core::image::Frame, lang: Lang) -> an
         .read(frame, 0.5)?
         .into_iter()
         .map(|l| crate::ocr::OcrLine { text: manga_core::text::normalize_for(&l.text, lang), rect: l.rect })
-        .filter(|l| !l.text.is_empty())
+        // A lone Korean letter («ㅇ») is a stroke of the drawing; «ㅋㅋ», «ㅠㅠ» stay.
+        .filter(|l| !l.text.is_empty() && !(l.text.chars().count() == 1 && l.text.chars().all(|c| ('\u{3131}'..='\u{318E}').contains(&c))))
         .collect())
 }
 
